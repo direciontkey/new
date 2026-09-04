@@ -1,0 +1,289 @@
+-- ============================================
+-- DELETE DECOR
+-- ============================================
+
+local Feature = {
+	NAME = "Delete Decor",
+	_workspace = game:GetService("Workspace"),
+	_enabled = false,
+	_generation = 0,
+	_connections = {},
+	_instances = {},
+	_tasks = {},
+	_loadedChunks = nil,
+}
+
+-- ============================================
+-- SETTINGS
+-- ============================================
+
+Feature._config = {
+	CHUNK_PATTERN = "^Chunk_%d+$",
+	CLEANUP_INTERVAL = 2,
+	CHUNK_DELAY = 0.1,
+}
+
+-- ============================================
+-- TRACKING HELPERS
+-- ============================================
+
+function Feature._safeDisconnect(connection)
+	if connection then
+		pcall(function()
+			connection:Disconnect()
+		end)
+	end
+end
+
+function Feature._safeDestroy(instance)
+	if instance then
+		pcall(function()
+			instance:Destroy()
+		end)
+	end
+end
+
+function Feature._safeCancel(thread)
+	if thread then
+		pcall(function()
+			task.cancel(thread)
+		end)
+	end
+end
+
+function Feature._trackConnection(connection)
+	if connection then
+		Feature._connections[#Feature._connections + 1] = connection
+	end
+	return connection
+end
+
+function Feature._trackInstance(instance)
+	if instance then
+		Feature._instances[#Feature._instances + 1] = instance
+	end
+	return instance
+end
+
+function Feature._trackTask(thread)
+	if thread then
+		Feature._tasks[#Feature._tasks + 1] = thread
+	end
+	return thread
+end
+
+-- ============================================
+-- CLEAN SINGLE CHUNK
+-- ============================================
+
+function Feature._cleanChunkDecor(chunk)
+	if not chunk or not chunk.Name:match(Feature._config.CHUNK_PATTERN) then
+		return false
+	end
+
+	local decor = chunk:FindFirstChild("Decor")
+
+	if decor then
+		Feature._safeDestroy(decor)
+		return true
+	end
+
+	return false
+end
+
+-- ============================================
+-- CLEAN ALL LOADED CHUNKS
+-- ============================================
+
+function Feature._cleanAllLoadedChunks()
+	local loadedChunks = Feature._workspace:FindFirstChild("LoadedChunks")
+
+	if not loadedChunks then
+		return
+	end
+
+	Feature._loadedChunks = loadedChunks
+
+	for _, chunk in ipairs(loadedChunks:GetChildren()) do
+		Feature._cleanChunkDecor(chunk)
+	end
+end
+
+-- ============================================
+-- WATCH NEW CHUNKS
+-- ============================================
+
+function Feature._watchForNewChunks()
+	local loadedChunks = Feature._workspace:FindFirstChild("LoadedChunks")
+
+	if not loadedChunks then
+		Feature._loadedChunks = nil
+		return
+	end
+
+	Feature._loadedChunks = loadedChunks
+	local generation = Feature._generation
+
+	Feature._trackConnection(
+		loadedChunks.ChildAdded:Connect(function(chunk)
+			if generation ~= Feature._generation or not Feature._enabled then
+				return
+			end
+
+			if not chunk.Name:match(Feature._config.CHUNK_PATTERN) then
+				return
+			end
+
+			local thread = task.delay(Feature._config.CHUNK_DELAY, function()
+				if generation ~= Feature._generation or not Feature._enabled then
+					return
+				end
+
+				if chunk.Parent then
+					Feature._cleanChunkDecor(chunk)
+				end
+			end)
+
+			Feature._trackTask(thread)
+		end)
+	)
+end
+
+-- ============================================
+-- PERIODIC CLEANUP
+-- ============================================
+
+function Feature._startCleanupLoop()
+	local generation = Feature._generation
+
+	local thread = task.spawn(function()
+		while generation == Feature._generation and Feature._enabled do
+			task.wait(Feature._config.CLEANUP_INTERVAL)
+
+			if generation ~= Feature._generation or not Feature._enabled then
+				break
+			end
+
+			Feature._cleanAllLoadedChunks()
+		end
+	end)
+
+	Feature._trackTask(thread)
+end
+
+-- ============================================
+-- LOADED CHUNKS MONITOR
+-- ============================================
+
+function Feature._setupLoadedChunksMonitor()
+	local loadedChunks = Feature._workspace:FindFirstChild("LoadedChunks")
+
+	if loadedChunks then
+		Feature._loadedChunks = loadedChunks
+		Feature._cleanAllLoadedChunks()
+		Feature._watchForNewChunks()
+		return
+	end
+
+	local generation = Feature._generation
+
+	Feature._trackConnection(
+		Feature._workspace.ChildAdded:Connect(function(child)
+			if generation ~= Feature._generation or not Feature._enabled then
+				return
+			end
+
+			if child.Name ~= "LoadedChunks" then
+				return
+			end
+
+			Feature._loadedChunks = child
+			Feature._cleanAllLoadedChunks()
+			Feature._watchForNewChunks()
+		end)
+	)
+end
+
+-- ============================================
+-- ENABLE
+-- ============================================
+
+function Feature.enable()
+	Feature.cleanup()
+	Feature._generation += 1
+	Feature._enabled = true
+
+	Feature._setupLoadedChunksMonitor()
+
+	local generation = Feature._generation
+
+	local thread = task.delay(0.5, function()
+		if generation ~= Feature._generation or not Feature._enabled then
+			return
+		end
+
+		Feature._cleanAllLoadedChunks()
+		Feature._watchForNewChunks()
+		Feature._startCleanupLoop()
+	end)
+
+	Feature._trackTask(thread)
+end
+
+-- ============================================
+-- DISABLE
+-- ============================================
+
+function Feature.disable()
+	Feature._enabled = false
+	Feature.cleanup()
+end
+
+-- ============================================
+-- IS ENABLED
+-- ============================================
+
+function Feature.isEnabled()
+	return Feature._enabled
+end
+
+-- ============================================
+-- FORCE CLEAN
+-- ============================================
+
+function Feature.forceCleanDecor()
+	Feature._cleanAllLoadedChunks()
+end
+
+-- ============================================
+-- CLEANUP
+-- ============================================
+
+function Feature.cleanup()
+	Feature._enabled = false
+	Feature._generation += 1
+
+	for index, connection in pairs(Feature._connections) do
+		Feature._safeDisconnect(connection)
+		Feature._connections[index] = nil
+	end
+
+	Feature._connections = {}
+
+	for index, thread in pairs(Feature._tasks) do
+		Feature._safeCancel(thread)
+		Feature._tasks[index] = nil
+	end
+
+	Feature._tasks = {}
+
+	for index, instance in pairs(Feature._instances) do
+		Feature._safeDestroy(instance)
+		Feature._instances[index] = nil
+	end
+
+	Feature._instances = {}
+	Feature._loadedChunks = nil
+end
+
+return Feature
