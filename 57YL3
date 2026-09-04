@@ -1,0 +1,340 @@
+local Feature = {
+	NAME = "Style Switcher",
+
+	_players = game:GetService("Players"),
+	_replicatedStorage = game:GetService("ReplicatedStorage"),
+
+	_enabled = false,
+	_generation = 0,
+
+	_connections = {},
+	_instances = {},
+	_tasks = {},
+
+	_player = nil,
+	_playerGui = nil,
+	_equipStyleSlot = nil,
+
+	_styleGUI = nil,
+	_styleButton = nil,
+
+	_currentMode = "1",
+}
+
+-- ============================================
+-- CONSTANTS
+-- ============================================
+
+Feature._guiName = "StyleGUI"
+
+-- ============================================
+-- TRACKING HELPERS
+-- ============================================
+
+function Feature._safeDisconnect(connection)
+	if connection then
+		pcall(function()
+			connection:Disconnect()
+		end)
+	end
+end
+
+function Feature._safeDestroy(instance)
+	if instance then
+		pcall(function()
+			instance:Destroy()
+		end)
+	end
+end
+
+function Feature._safeCancel(thread)
+	if thread then
+		pcall(function()
+			task.cancel(thread)
+		end)
+	end
+end
+
+function Feature._trackConnection(connection)
+	if connection then
+		table.insert(Feature._connections, connection)
+	end
+
+	return connection
+end
+
+function Feature._trackInstance(instance)
+	if instance then
+		table.insert(Feature._instances, instance)
+	end
+
+	return instance
+end
+
+function Feature._trackTask(thread)
+	if thread then
+		table.insert(Feature._tasks, thread)
+	end
+
+	return thread
+end
+
+-- ============================================
+-- STYLE HELPERS
+-- ============================================
+
+function Feature._switchStyle(slot)
+	if not Feature._enabled then
+		return
+	end
+
+	local generation = Feature._generation
+
+	Feature._currentMode = slot
+
+	if Feature._styleButton then
+		Feature._styleButton.Text = slot == "1" and "S1" or "S2"
+	end
+
+	local equipStyleSlot = Feature._equipStyleSlot
+
+	if not equipStyleSlot then
+		return
+	end
+
+	pcall(function()
+		if generation ~= Feature._generation or not Feature._enabled then
+			return
+		end
+
+		equipStyleSlot:FireServer(slot)
+	end)
+end
+
+function Feature._toggleStyle()
+	if not Feature._enabled then
+		return
+	end
+
+	local nextMode = Feature._currentMode == "1" and "2" or "1"
+	Feature._switchStyle(nextMode)
+end
+
+-- ============================================
+-- GUI CREATION
+-- ============================================
+
+function Feature._removeStyleGUI()
+	if Feature._styleGUI then
+		Feature._safeDestroy(Feature._styleGUI)
+		Feature._styleGUI = nil
+	end
+
+	Feature._styleButton = nil
+
+	local playerGui = Feature._playerGui
+
+	if not playerGui then
+		return
+	end
+
+	pcall(function()
+		for _, gui in ipairs(playerGui:GetChildren()) do
+			if gui:IsA("ScreenGui") and gui.Name == Feature._guiName then
+				Feature._safeDestroy(gui)
+			end
+		end
+	end)
+end
+
+function Feature._createStyleGUI()
+	Feature._removeStyleGUI()
+
+	local generation = Feature._generation
+	local playerGui = Feature._playerGui
+
+	if not playerGui or not Feature._enabled then
+		return
+	end
+
+	local screenGui = Instance.new("ScreenGui")
+	screenGui.Name = Feature._guiName
+	screenGui.IgnoreGuiInset = true
+	screenGui.ResetOnSpawn = false
+	screenGui.Parent = playerGui
+
+	Feature._trackInstance(screenGui)
+	Feature._styleGUI = screenGui
+
+	local frame = Instance.new("Frame")
+	frame.Position = UDim2.new(0.5, -503, 0.5, 48)
+	frame.Size = UDim2.fromOffset(57.475, 40)
+	frame.BackgroundTransparency = 1
+	frame.BorderSizePixel = 0
+	frame.Parent = screenGui
+
+	Feature._trackInstance(frame)
+
+	local styleButton = Instance.new("TextButton")
+	styleButton.Size = UDim2.fromScale(1, 1)
+	styleButton.BackgroundColor3 = Color3.new(0, 0, 0)
+	styleButton.BackgroundTransparency = 0.5
+	styleButton.BorderSizePixel = 0
+	styleButton.TextColor3 = Color3.new(1, 1, 1)
+	styleButton.TextSize = 14
+	styleButton.Font = Enum.Font.GothamBold
+	styleButton.Text = Feature._currentMode == "1" and "S1" or "S2"
+	styleButton.Parent = frame
+
+	Feature._trackInstance(styleButton)
+	Feature._styleButton = styleButton
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 6)
+	corner.Parent = styleButton
+
+	Feature._trackInstance(corner)
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Color3.new(1, 1, 1)
+	stroke.Thickness = 1
+	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	stroke.Parent = styleButton
+
+	Feature._trackInstance(stroke)
+
+	Feature._trackConnection(styleButton.Activated:Connect(function()
+		if generation ~= Feature._generation or not Feature._enabled then
+			return
+		end
+
+		Feature._toggleStyle()
+	end))
+end
+
+-- ============================================
+-- MONITORING / LIFECYCLE SETUP
+-- ============================================
+
+function Feature._setupPlayerGuiMonitoring()
+	local playerGui = Feature._playerGui
+
+	if not playerGui then
+		return
+	end
+
+	local generation = Feature._generation
+
+	Feature._trackConnection(playerGui.ChildRemoved:Connect(function(child)
+		if generation ~= Feature._generation or not Feature._enabled then
+			return
+		end
+
+		if child == Feature._styleGUI then
+			Feature._styleGUI = nil
+			Feature._styleButton = nil
+			Feature._createStyleGUI()
+		end
+	end))
+end
+
+-- ============================================
+-- LIFECYCLE
+-- ============================================
+
+function Feature.enable()
+	Feature.cleanup()
+
+	Feature._generation += 1
+	Feature._enabled = true
+
+	Feature._currentMode = "1"
+
+	Feature._player = Feature._players.LocalPlayer
+
+	if not Feature._player then
+		Feature._enabled = false
+		Feature.cleanup()
+		return
+	end
+
+	local success, playerGui = pcall(function()
+		return Feature._player:WaitForChild("PlayerGui")
+	end)
+
+	if not success or not playerGui then
+		Feature._enabled = false
+		Feature.cleanup()
+		return
+	end
+
+	Feature._playerGui = playerGui
+
+	local remoteSuccess, remote = pcall(function()
+		return Feature._replicatedStorage
+			:WaitForChild("Remotes")
+			:WaitForChild("EquipStyleSlot")
+	end)
+
+	if not remoteSuccess or not remote then
+		Feature._enabled = false
+		Feature.cleanup()
+		return
+	end
+
+	Feature._equipStyleSlot = remote
+
+	Feature._createStyleGUI()
+	Feature._setupPlayerGuiMonitoring()
+end
+
+function Feature.disable()
+	Feature._enabled = false
+	Feature.cleanup()
+end
+
+function Feature.isEnabled()
+	return Feature._enabled
+end
+
+function Feature.cleanup()
+	Feature._enabled = false
+
+	Feature._generation += 1
+
+	-- Disconnect every connection.
+	for _, connection in ipairs(Feature._connections) do
+		Feature._safeDisconnect(connection)
+	end
+
+	table.clear(Feature._connections)
+
+	-- Cancel every tracked task.
+	for _, thread in ipairs(Feature._tasks) do
+		Feature._safeCancel(thread)
+	end
+
+	table.clear(Feature._tasks)
+
+	-- Destroy every instance created by the feature.
+	for _, instance in ipairs(Feature._instances) do
+		Feature._safeDestroy(instance)
+	end
+
+	table.clear(Feature._instances)
+
+	-- Remove any remaining GUI with the feature's name.
+	Feature._removeStyleGUI()
+
+	-- Reset runtime references/state.
+	Feature._player = nil
+	Feature._playerGui = nil
+	Feature._equipStyleSlot = nil
+
+	Feature._styleGUI = nil
+	Feature._styleButton = nil
+
+	Feature._currentMode = "1"
+end
+
+return Feature
