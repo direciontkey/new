@@ -1,0 +1,347 @@
+-- ============================================
+-- AUTO COLLECT
+-- ============================================
+
+local Feature = {
+	NAME = "Auto Collect",
+	_players = game:GetService("Players"),
+	_runService = game:GetService("RunService"),
+	_replicatedStorage = game:GetService("ReplicatedStorage"),
+	_workspace = game:GetService("Workspace"),
+	_enabled = false,
+	_generation = 0,
+	_connections = {},
+	_instances = {},
+	_tasks = {},
+	_prompts = {},
+	_lastFired = {},
+	_lastCheck = 0,
+	_trainFuel = nil,
+}
+
+-- ============================================
+-- SETTINGS
+-- ============================================
+
+Feature._config = {
+	CHECK_INTERVAL = 0.0001,
+	FUEL_LIMIT = 80,
+	COOLDOWNS = {
+		FirePlacePrompt = 0.1,
+		TurretCrate = 0.15,
+		WeaponsCrate = 0.15,
+		WrenchCollect = 0.15,
+	},
+	BLOCKED = {
+		FixingTheTrain = true,
+		DriverStuff = true,
+	},
+}
+
+-- ============================================
+-- TRACKING HELPERS
+-- ============================================
+
+function Feature._safeDisconnect(connection)
+	if connection then
+		pcall(function()
+			connection:Disconnect()
+		end)
+	end
+end
+
+function Feature._safeDestroy(instance)
+	if instance then
+		pcall(function()
+			instance:Destroy()
+		end)
+	end
+end
+
+function Feature._safeCancel(thread)
+	if thread then
+		pcall(function()
+			task.cancel(thread)
+		end)
+	end
+end
+
+function Feature._trackConnection(connection)
+	if connection then
+		Feature._connections[#Feature._connections + 1] = connection
+	end
+	return connection
+end
+
+function Feature._trackInstance(instance)
+	if instance then
+		Feature._instances[#Feature._instances + 1] = instance
+	end
+	return instance
+end
+
+function Feature._trackTask(thread)
+	if thread then
+		Feature._tasks[#Feature._tasks + 1] = thread
+	end
+	return thread
+end
+
+-- ============================================
+-- CLASSIFY PROMPT
+-- ============================================
+
+function Feature._classifyPrompt(prompt)
+	local cooldown
+	local firePlace = false
+	local current = prompt
+
+	while current and current ~= Feature._workspace do
+		local name = current.Name
+
+		if Feature._config.BLOCKED[name] then
+			return nil
+		end
+
+		if name == "FirePlacePrompt" then
+			firePlace = true
+			cooldown = Feature._config.COOLDOWNS.FirePlacePrompt
+		elseif not cooldown then
+			cooldown = Feature._config.COOLDOWNS[name]
+		end
+
+		current = current.Parent
+	end
+
+	return {
+		firePlace = firePlace,
+		cooldown = cooldown,
+	}
+end
+
+-- ============================================
+-- PROMPT POSITION
+-- ============================================
+
+function Feature._getPromptPosition(prompt)
+	local current = prompt.Parent
+
+	while current and current ~= Feature._workspace do
+		if current:IsA("BasePart") then
+			return current.Position
+		elseif current:IsA("Attachment") then
+			return current.WorldPosition
+		elseif current:IsA("Model") then
+			return current:GetPivot().Position
+		end
+
+		current = current.Parent
+	end
+
+	return nil
+end
+
+-- ============================================
+-- ADD PROMPT
+-- ============================================
+
+function Feature._addPrompt(obj)
+	if not Feature._enabled then
+		return
+	end
+
+	if not obj:IsA("ProximityPrompt") then
+		return
+	end
+
+	local info = Feature._classifyPrompt(obj)
+
+	if not info then
+		return
+	end
+
+	Feature._prompts[obj] = info
+	obj.HoldDuration = 0
+end
+
+-- ============================================
+-- INITIAL SCAN
+-- ============================================
+
+function Feature._scanPrompts()
+	for _, obj in ipairs(Feature._workspace:GetDescendants()) do
+		Feature._addPrompt(obj)
+	end
+end
+
+-- ============================================
+-- AUTO COLLECT
+-- ============================================
+
+function Feature._startAutoCollect()
+	local generation = Feature._generation
+
+	Feature._trackConnection(
+		Feature._runService.RenderStepped:Connect(function()
+			if generation ~= Feature._generation or not Feature._enabled then
+				return
+			end
+
+			local now = os.clock()
+
+			if now - Feature._lastCheck < Feature._config.CHECK_INTERVAL then
+				return
+			end
+
+			Feature._lastCheck = now
+
+			local player = Feature._players.LocalPlayer
+			local character = player and player.Character
+			local root = character and character:FindFirstChild("HumanoidRootPart")
+
+			if not root then
+				return
+			end
+
+			local rootPosition = root.Position
+			local fuel = Feature._trainFuel.Value
+			local numericFuel = typeof(fuel) == "number"
+
+			for prompt, info in pairs(Feature._prompts) do
+				if not prompt.Parent then
+					Feature._prompts[prompt] = nil
+					Feature._lastFired[prompt] = nil
+					continue
+				end
+
+				if info.firePlace and numericFuel and fuel > Feature._config.FUEL_LIMIT then
+					continue
+				end
+
+				local position = Feature._getPromptPosition(prompt)
+
+				if not position then
+					continue
+				end
+
+				if (rootPosition - position).Magnitude > prompt.MaxActivationDistance then
+					continue
+				end
+
+				local cooldown = info.cooldown
+
+				if cooldown then
+					local lastTime = Feature._lastFired[prompt]
+
+					if lastTime and now - lastTime < cooldown then
+						continue
+					end
+				end
+
+				if info.firePlace then
+					fuel = Feature._trainFuel.Value
+
+					if typeof(fuel) == "number" and fuel > Feature._config.FUEL_LIMIT then
+						continue
+					end
+				end
+
+				prompt:InputHoldBegin(player)
+				prompt:InputHoldEnd(player)
+
+				if cooldown then
+					Feature._lastFired[prompt] = now
+				end
+			end
+		end)
+	)
+end
+
+-- ============================================
+-- ENABLE
+-- ============================================
+
+function Feature.enable()
+	Feature.cleanup()
+	Feature._generation += 1
+	Feature._enabled = true
+	Feature._lastCheck = 0
+	Feature._prompts = {}
+	Feature._lastFired = {}
+
+	local success, trainFuel = pcall(function()
+		return Feature._replicatedStorage
+			:WaitForChild("World3Variables")
+			:WaitForChild("TrainFuel")
+	end)
+
+	if not success or not trainFuel then
+		Feature._enabled = false
+		return
+	end
+
+	Feature._trainFuel = trainFuel
+
+	Feature._scanPrompts()
+
+	Feature._trackConnection(
+		Feature._workspace.DescendantAdded:Connect(function(obj)
+			Feature._addPrompt(obj)
+		end)
+	)
+
+	Feature._startAutoCollect()
+end
+
+-- ============================================
+-- DISABLE
+-- ============================================
+
+function Feature.disable()
+	Feature._enabled = false
+	Feature.cleanup()
+end
+
+-- ============================================
+-- IS ENABLED
+-- ============================================
+
+function Feature.isEnabled()
+	return Feature._enabled
+end
+
+-- ============================================
+-- CLEANUP
+-- ============================================
+
+function Feature.cleanup()
+	Feature._enabled = false
+	Feature._generation += 1
+	Feature._lastCheck = 0
+
+	for index, connection in pairs(Feature._connections) do
+		Feature._safeDisconnect(connection)
+		Feature._connections[index] = nil
+	end
+
+	Feature._connections = {}
+
+	for index, thread in pairs(Feature._tasks) do
+		Feature._safeCancel(thread)
+		Feature._tasks[index] = nil
+	end
+
+	Feature._tasks = {}
+
+	for index, instance in pairs(Feature._instances) do
+		Feature._safeDestroy(instance)
+		Feature._instances[index] = nil
+	end
+
+	Feature._instances = {}
+	Feature._prompts = {}
+	Feature._lastFired = {}
+	Feature._trainFuel = nil
+end
+
+return Feature
