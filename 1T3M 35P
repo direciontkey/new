@@ -1,0 +1,871 @@
+-- ============================================
+-- FEATURE
+-- ============================================
+
+local Feature = {}
+
+Feature.NAME = "Item ESP"
+
+-- ============================================
+-- SERVICES
+-- ============================================
+
+Feature._players = game:GetService("Players")
+Feature._workspace = game:GetService("Workspace")
+Feature._runService = game:GetService("RunService")
+
+-- ============================================
+-- CONFIGURATION
+-- ============================================
+
+Feature._maxDistance = 800
+Feature._updateInterval = 0.10
+
+Feature._highlightConfig = {
+    CoalBox = {
+        fillColor = Color3.fromRGB(255, 170, 0),
+        outlineColor = Color3.fromRGB(255, 230, 80),
+        label = "Coal",
+    },
+
+    TurretCrate = {
+        fillColor = Color3.fromRGB(255, 220, 0),
+        outlineColor = Color3.fromRGB(255, 245, 160),
+        label = "Turret",
+    },
+
+    WeaponsCrate = {
+        fillColor = Color3.fromRGB(0, 200, 80),
+        outlineColor = Color3.fromRGB(150, 255, 180),
+        label = "Weapons",
+    },
+
+    WrenchCollect = {
+        fillColor = Color3.fromRGB(255, 60, 60),
+        outlineColor = Color3.fromRGB(255, 170, 170),
+        label = "Wrench",
+    },
+}
+
+-- ============================================
+-- STATE
+-- ============================================
+
+Feature._enabled = false
+Feature._generation = 0
+Feature._connections = {}
+Feature._instances = {}
+Feature._tasks = {}
+
+Feature._trackedObjects = {}
+Feature._espObjects = {}
+Feature._monitoredObjects = {}
+Feature._monitoredChunks = {}
+Feature._loadedChunks = {}
+
+Feature._player = nil
+Feature._character = nil
+Feature._rootPart = nil
+
+-- ============================================
+-- RESOURCE HELPERS
+-- ============================================
+
+local function safeDisconnect(connection)
+    if connection then
+        pcall(function()
+            connection:Disconnect()
+        end)
+    end
+end
+
+local function safeDestroy(instance)
+    if instance then
+        pcall(function()
+            instance:Destroy()
+        end)
+    end
+end
+
+local function safeCancel(taskObject)
+    if taskObject then
+        pcall(function()
+            task.cancel(taskObject)
+        end)
+    end
+end
+
+local function trackConnection(connection)
+    if connection then
+        table.insert(Feature._connections, connection)
+    end
+
+    return connection
+end
+
+local function trackInstance(instance)
+    if instance then
+        table.insert(Feature._instances, instance)
+    end
+
+    return instance
+end
+
+local function trackTask(taskObject)
+    if taskObject then
+        table.insert(Feature._tasks, taskObject)
+    end
+
+    return taskObject
+end
+
+local function disconnectAllConnections()
+    for _, connection in ipairs(Feature._connections) do
+        safeDisconnect(connection)
+    end
+
+    table.clear(Feature._connections)
+end
+
+local function cancelAllTasks()
+    for _, taskObject in ipairs(Feature._tasks) do
+        safeCancel(taskObject)
+    end
+
+    table.clear(Feature._tasks)
+end
+
+local function destroyAllInstances()
+    for _, instance in ipairs(Feature._instances) do
+        safeDestroy(instance)
+    end
+
+    table.clear(Feature._instances)
+end
+
+-- ============================================
+-- OBJECT HELPERS
+-- ============================================
+
+local function isBasePart(instance)
+    return instance and instance:IsA("BasePart")
+end
+
+local function getObjectType(instance)
+    if not instance then
+        return nil
+    end
+
+    local name = instance.Name
+
+    if string.find(name, "CoalBox") then
+        return "CoalBox"
+    end
+
+    if name == "TurretCrate" then
+        return "TurretCrate"
+    end
+
+    if name == "WeaponsCrate" then
+        return "WeaponsCrate"
+    end
+
+    if name == "WrenchCollect" and isBasePart(instance) then
+        return "WrenchCollect"
+    end
+
+    return nil
+end
+
+local function getCoalPart(coalBox)
+    local coals = coalBox:FindFirstChild("Coals")
+
+    if not coals then
+        return nil
+    end
+
+    for _, child in ipairs(coals:GetChildren()) do
+        if child:IsA("BasePart") and string.match(child.Name, "^Coal_%d+$") then
+            if child.Transparency < 1 then
+                return child
+            end
+        end
+    end
+
+    return nil
+end
+
+local function isValidObject(instance, objectType)
+    if not instance or not instance.Parent then
+        return false
+    end
+
+    if objectType == "CoalBox" then
+        return getCoalPart(instance) ~= nil
+    end
+
+    if objectType == "TurretCrate" or objectType == "WeaponsCrate" then
+        local lid = instance:FindFirstChild("Lid")
+
+        return isBasePart(lid) and lid.CanCollide
+    end
+
+    if objectType == "WrenchCollect" then
+        return isBasePart(instance)
+    end
+
+    return false
+end
+
+local function getAdornee(instance, objectType)
+    if not instance or not instance.Parent then
+        return nil
+    end
+
+    if objectType == "CoalBox" then
+        return getCoalPart(instance)
+    end
+
+    if objectType == "TurretCrate" or objectType == "WeaponsCrate" then
+        local lid = instance:FindFirstChild("Lid")
+
+        if isBasePart(lid) then
+            return lid
+        end
+
+        return nil
+    end
+
+    if objectType == "WrenchCollect" and isBasePart(instance) then
+        return instance
+    end
+
+    return nil
+end
+
+local function getRootPart()
+    local player = Feature._player
+
+    if not player then
+        return nil
+    end
+
+    local character = player.Character
+
+    if character ~= Feature._character then
+        Feature._character = character
+        Feature._rootPart = nil
+    end
+
+    if not character then
+        return nil
+    end
+
+    if Feature._rootPart and Feature._rootPart.Parent then
+        return Feature._rootPart
+    end
+
+    local rootPart = character:FindFirstChild("HumanoidRootPart")
+
+    if rootPart and rootPart:IsA("BasePart") then
+        Feature._rootPart = rootPart
+        return rootPart
+    end
+
+    return nil
+end
+
+-- ============================================
+-- ESP HELPERS
+-- ============================================
+
+local function removeESP(target)
+    local esp = Feature._espObjects[target]
+
+    if not esp then
+        return
+    end
+
+    safeDestroy(esp.highlight)
+    safeDestroy(esp.billboard)
+
+    Feature._espObjects[target] = nil
+end
+
+local function createESP(target, objectType)
+    if not Feature._enabled then
+        return
+    end
+
+    if not target or not target.Parent then
+        return
+    end
+
+    if Feature._espObjects[target] then
+        return
+    end
+
+    local config = Feature._highlightConfig[objectType]
+
+    if not config then
+        return
+    end
+
+    local adornee = getAdornee(target, objectType)
+
+    if not adornee then
+        return
+    end
+
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "ESP_Highlight"
+    highlight.Adornee = adornee
+    highlight.FillColor = config.fillColor
+    highlight.OutlineColor = config.outlineColor
+    highlight.FillTransparency = 0.5
+    highlight.OutlineTransparency = 0
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.Parent = target
+
+    trackInstance(highlight)
+
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "ESP_Billboard"
+    billboard.Adornee = adornee
+    billboard.Size = UDim2.fromOffset(150, 35)
+    billboard.StudsOffset = Vector3.new(0, 2.5, 0)
+    billboard.AlwaysOnTop = true
+    billboard.Parent = target
+
+    trackInstance(billboard)
+
+    local label = Instance.new("TextLabel")
+    label.Name = "ESP_Label"
+    label.BackgroundTransparency = 1
+    label.Size = UDim2.fromScale(1, 1)
+    label.Text = config.label
+    label.TextColor3 = config.outlineColor
+    label.TextStrokeTransparency = 0
+    label.TextScaled = true
+    label.Font = Enum.Font.SourceSansBold
+    label.Parent = billboard
+
+    trackInstance(label)
+
+    Feature._espObjects[target] = {
+        highlight = highlight,
+        billboard = billboard,
+        label = label,
+        objectType = objectType,
+    }
+end
+
+local function updateESP(target, objectType, rootPart)
+    if not target or not target.Parent then
+        removeESP(target)
+        return
+    end
+
+    if not isValidObject(target, objectType) then
+        removeESP(target)
+        return
+    end
+
+    local adornee = getAdornee(target, objectType)
+
+    if not adornee then
+        removeESP(target)
+        return
+    end
+
+    if not rootPart then
+        removeESP(target)
+        return
+    end
+
+    local distance = (rootPart.Position - adornee.Position).Magnitude
+
+    if distance > Feature._maxDistance then
+        removeESP(target)
+        return
+    end
+
+    local esp = Feature._espObjects[target]
+
+    if not esp then
+        createESP(target, objectType)
+        return
+    end
+
+    if not esp.highlight or not esp.highlight.Parent then
+        removeESP(target)
+        createESP(target, objectType)
+        return
+    end
+
+    if esp.highlight.Adornee ~= adornee then
+        esp.highlight.Adornee = adornee
+    end
+
+    if esp.billboard and esp.billboard.Parent and esp.billboard.Adornee ~= adornee then
+        esp.billboard.Adornee = adornee
+    end
+end
+
+-- ============================================
+-- OBJECT MONITORING
+-- ============================================
+
+local function disconnectObjectMonitoring(target)
+    local monitor = Feature._monitoredObjects[target]
+
+    if not monitor then
+        return
+    end
+
+    for _, connection in ipairs(monitor.connections) do
+        safeDisconnect(connection)
+    end
+
+    Feature._monitoredObjects[target] = nil
+end
+
+local function monitorObject(target, objectType, generation)
+    if not Feature._enabled or generation ~= Feature._generation then
+        return
+    end
+
+    if Feature._monitoredObjects[target] then
+        return
+    end
+
+    local connections = {}
+
+    Feature._monitoredObjects[target] = {
+        objectType = objectType,
+        connections = connections,
+    }
+
+    local function refresh()
+        if not Feature._enabled or generation ~= Feature._generation then
+            return
+        end
+
+        if not target.Parent then
+            removeESP(target)
+            disconnectObjectMonitoring(target)
+            Feature._trackedObjects[target] = nil
+            return
+        end
+
+        updateESP(target, objectType, getRootPart())
+    end
+
+    table.insert(connections, target.AncestryChanged:Connect(function(_, parent)
+        if not Feature._enabled or generation ~= Feature._generation then
+            return
+        end
+
+        if not parent then
+            removeESP(target)
+            disconnectObjectMonitoring(target)
+            Feature._trackedObjects[target] = nil
+            return
+        end
+
+        refresh()
+    end))
+
+    if objectType == "CoalBox" then
+        table.insert(connections, target.ChildAdded:Connect(function(child)
+            if not Feature._enabled or generation ~= Feature._generation then
+                return
+            end
+
+            if child.Name == "Coals" then
+                refresh()
+            end
+        end))
+
+        table.insert(connections, target.ChildRemoved:Connect(function(child)
+            if not Feature._enabled or generation ~= Feature._generation then
+                return
+            end
+
+            if child.Name == "Coals" then
+                refresh()
+            end
+        end))
+
+        local coals = target:FindFirstChild("Coals")
+
+        if coals then
+            table.insert(connections, coals.ChildAdded:Connect(function(child)
+                if not Feature._enabled or generation ~= Feature._generation then
+                    return
+                end
+
+                if child:IsA("BasePart") then
+                    table.insert(connections, child:GetPropertyChangedSignal("Transparency"):Connect(function()
+                        if not Feature._enabled or generation ~= Feature._generation then
+                            return
+                        end
+
+                        refresh()
+                    end))
+                end
+
+                refresh()
+            end))
+
+            table.insert(connections, coals.ChildRemoved:Connect(function()
+                if not Feature._enabled or generation ~= Feature._generation then
+                    return
+                end
+
+                refresh()
+            end))
+
+            for _, coal in ipairs(coals:GetChildren()) do
+                if coal:IsA("BasePart") then
+                    table.insert(connections, coal:GetPropertyChangedSignal("Transparency"):Connect(function()
+                        if not Feature._enabled or generation ~= Feature._generation then
+                            return
+                        end
+
+                        refresh()
+                    end))
+                end
+            end
+        end
+    elseif objectType == "TurretCrate" or objectType == "WeaponsCrate" then
+        table.insert(connections, target.ChildAdded:Connect(function()
+            if not Feature._enabled or generation ~= Feature._generation then
+                return
+            end
+
+            refresh()
+        end))
+
+        table.insert(connections, target.ChildRemoved:Connect(function()
+            if not Feature._enabled or generation ~= Feature._generation then
+                return
+            end
+
+            refresh()
+        end))
+
+        local lid = target:FindFirstChild("Lid")
+
+        if isBasePart(lid) then
+            table.insert(connections, lid:GetPropertyChangedSignal("CanCollide"):Connect(function()
+                if not Feature._enabled or generation ~= Feature._generation then
+                    return
+                end
+
+                refresh()
+            end))
+        end
+    end
+
+    refresh()
+end
+
+local function registerObject(target, generation)
+    if not Feature._enabled or generation ~= Feature._generation then
+        return
+    end
+
+    if not target or not target.Parent then
+        return
+    end
+
+    local objectType = getObjectType(target)
+
+    if not objectType then
+        return
+    end
+
+    if Feature._trackedObjects[target] then
+        return
+    end
+
+    Feature._trackedObjects[target] = objectType
+    monitorObject(target, objectType, generation)
+end
+
+-- ============================================
+-- CHUNK MONITORING
+-- ============================================
+
+local function clearChunk(chunk)
+    local connections = Feature._monitoredChunks[chunk]
+
+    if connections then
+        for _, connection in ipairs(connections) do
+            safeDisconnect(connection)
+        end
+    end
+
+    Feature._monitoredChunks[chunk] = nil
+    Feature._loadedChunks[chunk] = nil
+end
+
+local function scanChunk(chunk, generation)
+    if not Feature._enabled or generation ~= Feature._generation then
+        return
+    end
+
+    if not chunk or not chunk.Parent then
+        return
+    end
+
+    if Feature._loadedChunks[chunk] then
+        return
+    end
+
+    Feature._loadedChunks[chunk] = true
+
+    for _, descendant in ipairs(chunk:GetDescendants()) do
+        if not Feature._enabled or generation ~= Feature._generation then
+            return
+        end
+
+        registerObject(descendant, generation)
+    end
+
+    local connections = {}
+
+    Feature._monitoredChunks[chunk] = connections
+
+    table.insert(connections, chunk.DescendantAdded:Connect(function(descendant)
+        if not Feature._enabled or generation ~= Feature._generation then
+            return
+        end
+
+        registerObject(descendant, generation)
+    end))
+
+    table.insert(connections, chunk.DescendantRemoving:Connect(function(descendant)
+        if not Feature._enabled or generation ~= Feature._generation then
+            return
+        end
+
+        if Feature._trackedObjects[descendant] then
+            removeESP(descendant)
+            disconnectObjectMonitoring(descendant)
+            Feature._trackedObjects[descendant] = nil
+        end
+    end))
+
+    table.insert(connections, chunk.AncestryChanged:Connect(function(_, parent)
+        if not Feature._enabled or generation ~= Feature._generation then
+            return
+        end
+
+        if not parent then
+            clearChunk(chunk)
+        end
+    end))
+end
+
+local function scanLoadedChunks(container, generation)
+    if not Feature._enabled or generation ~= Feature._generation then
+        return
+    end
+
+    if not container or not container.Parent then
+        return
+    end
+
+    for _, chunk in ipairs(container:GetChildren()) do
+        if not Feature._enabled or generation ~= Feature._generation then
+            return
+        end
+
+        scanChunk(chunk, generation)
+    end
+end
+
+-- ============================================
+-- UPDATE LOOP
+-- ============================================
+
+local function startUpdateLoop(generation)
+    local updateTask = task.spawn(function()
+        while Feature._enabled and generation == Feature._generation do
+            local rootPart = getRootPart()
+
+            if rootPart then
+                for target, objectType in pairs(Feature._trackedObjects) do
+                    if not Feature._enabled or generation ~= Feature._generation then
+                        return
+                    end
+
+                    updateESP(target, objectType, rootPart)
+                end
+            else
+                for target in pairs(Feature._espObjects) do
+                    removeESP(target)
+                end
+            end
+
+            task.wait(Feature._updateInterval)
+        end
+    end)
+
+    trackTask(updateTask)
+end
+
+-- ============================================
+-- LIFECYCLE
+-- ============================================
+
+-- ============================================
+-- ENABLE
+-- ============================================
+
+function Feature.enable()
+    Feature.cleanup()
+
+    Feature._generation += 1
+    Feature._enabled = true
+
+    local generation = Feature._generation
+
+    Feature._player = Feature._players.LocalPlayer
+
+    if not Feature._player then
+        Feature._enabled = false
+        Feature.cleanup()
+        return
+    end
+
+    Feature._character = Feature._player.Character
+
+    trackConnection(Feature._player.CharacterAdded:Connect(function(character)
+        if not Feature._enabled or generation ~= Feature._generation then
+            return
+        end
+
+        Feature._character = character
+        Feature._rootPart = nil
+    end))
+
+    trackConnection(Feature._player.CharacterRemoving:Connect(function(character)
+        if not Feature._enabled or generation ~= Feature._generation then
+            return
+        end
+
+        if Feature._character == character then
+            Feature._character = nil
+            Feature._rootPart = nil
+        end
+    end))
+
+    local loadedChunks = Feature._workspace:FindFirstChild("LoadedChunks")
+
+    if loadedChunks then
+        scanLoadedChunks(loadedChunks, generation)
+
+        trackConnection(loadedChunks.ChildAdded:Connect(function(chunk)
+            if not Feature._enabled or generation ~= Feature._generation then
+                return
+            end
+
+            scanChunk(chunk, generation)
+        end))
+
+        trackConnection(loadedChunks.ChildRemoved:Connect(function(chunk)
+            if not Feature._enabled or generation ~= Feature._generation then
+                return
+            end
+
+            clearChunk(chunk)
+        end))
+    else
+        for _, descendant in ipairs(Feature._workspace:GetDescendants()) do
+            if not Feature._enabled or generation ~= Feature._generation then
+                return
+            end
+
+            registerObject(descendant, generation)
+        end
+
+        trackConnection(Feature._workspace.DescendantAdded:Connect(function(descendant)
+            if not Feature._enabled or generation ~= Feature._generation then
+                return
+            end
+
+            registerObject(descendant, generation)
+        end))
+
+        trackConnection(Feature._workspace.DescendantRemoving:Connect(function(descendant)
+            if not Feature._enabled or generation ~= Feature._generation then
+                return
+            end
+
+            if Feature._trackedObjects[descendant] then
+                removeESP(descendant)
+                disconnectObjectMonitoring(descendant)
+                Feature._trackedObjects[descendant] = nil
+            end
+        end))
+    end
+
+    startUpdateLoop(generation)
+end
+
+-- ============================================
+-- DISABLE
+-- ============================================
+
+function Feature.disable()
+    Feature._enabled = false
+    Feature.cleanup()
+end
+
+-- ============================================
+-- ENABLED STATE
+-- ============================================
+
+function Feature.isEnabled()
+    return Feature._enabled == true
+end
+
+-- ============================================
+-- CLEANUP
+-- ============================================
+
+function Feature.cleanup()
+    Feature._enabled = false
+    Feature._generation += 1
+
+    for target in pairs(Feature._espObjects) do
+        removeESP(target)
+    end
+
+    for target in pairs(Feature._monitoredObjects) do
+        disconnectObjectMonitoring(target)
+    end
+
+    for chunk in pairs(Feature._monitoredChunks) do
+        clearChunk(chunk)
+    end
+
+    disconnectAllConnections()
+    cancelAllTasks()
+    destroyAllInstances()
+
+    table.clear(Feature._trackedObjects)
+    table.clear(Feature._espObjects)
+    table.clear(Feature._monitoredObjects)
+    table.clear(Feature._monitoredChunks)
+    table.clear(Feature._loadedChunks)
+
+    Feature._player = nil
+    Feature._character = nil
+    Feature._rootPart = nil
+end
+
+return Feature
