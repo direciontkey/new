@@ -1,0 +1,494 @@
+-- ============================================
+-- GUN MODS FEATURE
+-- ============================================
+
+local Feature = {
+	NAME = "Gun Mods",
+
+	_replicatedStorage = game:GetService("ReplicatedStorage"),
+
+	_enabled = false,
+	_applying = false,
+	_applyQueued = false,
+	_generation = 0,
+
+	_connections = {},
+	_instances = {},
+	_tasks = {},
+
+	_modifiedModules = setmetatable({}, { __mode = "k" }),
+	_originalModules = setmetatable({}, { __mode = "k" }),
+
+	_fireRate = 0.0001,
+}
+
+-- ============================================
+-- MODIFIED STATS
+-- ============================================
+
+Feature._modifiedStats = {
+	FireRate = Feature._fireRate,
+	AmmoPerMag = math.huge,
+	CameraRecoilingEnabled = false,
+	Spread = 0,
+	ScopeKnockbackMultiplier = 0,
+	Recoil = 0,
+	CrossExpansion = 0,
+	ReloadTime = 0,
+	CrossSize = 1,
+	EquipTime = 0.01,
+	Range = 9999,
+	Lifetime = 60,
+	ZeroDamageDistance = 9999,
+	FullDamageDistance = 9999,
+	BulletSpeed = 9000,
+	EquippedAnimationID = nil,
+	EquippedAnimationSpeed = 99,
+	ShotgunEnabled = true,
+
+	Ammo = math.huge,
+	MaxAmmo = math.huge,
+
+	BurstFireEnabled = true,
+	BulletPerBurst = 10,
+	BurstRate = 0.00001,
+	Auto = true,
+
+	MuzzleFlashEnabled = false,
+	MuzzleLightEnabled = false,
+
+	PenetrationType = "WallPenetration",
+	PenetrationDepth = 9999,
+	PenetrationAmount = 9999,
+	PenetrationIgnoreDelay = 0,
+	ProjectileMotion = false,
+	CanBreakGlass = true,
+	IgnoreBlacklistedParts = true,
+	PenetrationMaxHits = 999,
+	PenetrationDamageReduction = 0,
+
+	DamageDropOffEnabled = false,
+}
+
+-- ============================================
+-- RESOURCE HELPERS
+-- ============================================
+
+local function safeDisconnect(connection)
+	if connection then
+		pcall(function()
+			connection:Disconnect()
+		end)
+	end
+end
+
+local function safeDestroy(instance)
+	if instance then
+		pcall(function()
+			instance:Destroy()
+		end)
+	end
+end
+
+local function safeCancel(taskObject)
+	if taskObject then
+		pcall(function()
+			task.cancel(taskObject)
+		end)
+	end
+end
+
+local function trackConnection(connection)
+	if connection then
+		Feature._connections[#Feature._connections + 1] = connection
+	end
+
+	return connection
+end
+
+local function trackTask(taskObject)
+	if taskObject then
+		Feature._tasks[#Feature._tasks + 1] = taskObject
+	end
+
+	return taskObject
+end
+
+local function disconnectAllConnections()
+	for index, connection in pairs(Feature._connections) do
+		safeDisconnect(connection)
+		Feature._connections[index] = nil
+	end
+end
+
+local function cancelAllTasks()
+	for index, taskObject in pairs(Feature._tasks) do
+		safeCancel(taskObject)
+		Feature._tasks[index] = nil
+	end
+end
+
+local function destroyAllInstances()
+	for index, instance in pairs(Feature._instances) do
+		safeDestroy(instance)
+		Feature._instances[index] = nil
+	end
+end
+
+-- ============================================
+-- GET WEAPON FOLDER
+-- ============================================
+
+function Feature._getWeaponFolder()
+	local modules = Feature._replicatedStorage:FindFirstChild("Modules")
+
+	if not modules then
+		return nil
+	end
+
+	local settings = modules:FindFirstChild("WeaponSettings")
+
+	if not settings then
+		return nil
+	end
+
+	return settings:FindFirstChild("Gun")
+end
+
+-- ============================================
+-- ANIMATION HELPERS
+-- ============================================
+
+function Feature._snapshotAnimations(config)
+	local animations = config.FireAnimations
+
+	if type(animations) ~= "table" then
+		return nil
+	end
+
+	local snapshot = {}
+
+	for index, animation in ipairs(animations) do
+		if type(animation) == "table" then
+			snapshot[index] = {
+				FireAnimationID = animation.FireAnimationID,
+				FireAnimationSpeed = animation.FireAnimationSpeed,
+			}
+		end
+	end
+
+	return snapshot
+end
+
+function Feature._disableAnimations(config)
+	local animations = config.FireAnimations
+
+	if type(animations) ~= "table" then
+		return
+	end
+
+	for index = 1, #animations do
+		local animation = animations[index]
+
+		if type(animation) == "table" then
+			animation.FireAnimationID = nil
+			animation.FireAnimationSpeed = 0
+		end
+	end
+end
+
+function Feature._restoreAnimations(config, snapshot)
+	if type(snapshot) ~= "table" then
+		return
+	end
+
+	local animations = config.FireAnimations
+
+	if type(animations) ~= "table" then
+		return
+	end
+
+	for index, saved in pairs(snapshot) do
+		local animation = animations[index]
+
+		if animation and type(animation) == "table" then
+			animation.FireAnimationID = saved.FireAnimationID
+			animation.FireAnimationSpeed = saved.FireAnimationSpeed
+		end
+	end
+end
+
+-- ============================================
+-- SAVE ORIGINAL SETTINGS
+-- ============================================
+
+function Feature._saveOriginal(config, isEclipse)
+	if Feature._originalModules[config] then
+		return
+	end
+
+	local snapshot = {}
+
+	if isEclipse then
+		snapshot.ExplosiveEnabled = config.ExplosiveEnabled
+		snapshot.ExplosionRadius = config.ExplosionRadius
+		snapshot.ExplosionKnockbackPower = config.ExplosionKnockbackPower
+		snapshot.ProjectileType = config.ProjectileType
+		snapshot.Range = config.Range
+		snapshot.Lifetime = config.Lifetime
+		snapshot.CameraRecoilingEnabled = config.CameraRecoilingEnabled
+		snapshot.Recoil = config.Recoil
+		snapshot.Spread = config.Spread
+		snapshot.CrossExpansion = config.CrossExpansion
+		snapshot.AmmoPerMag = config.AmmoPerMag
+		snapshot.ReloadTime = config.ReloadTime
+		snapshot.EquipTime = config.EquipTime
+		snapshot.ZeroDamageDistance = config.ZeroDamageDistance
+		snapshot.FullDamageDistance = config.FullDamageDistance
+		snapshot.BulletSpeed = config.BulletSpeed
+		snapshot.CrossSize = config.CrossSize
+	else
+		for key in pairs(Feature._modifiedStats) do
+			snapshot[key] = config[key]
+		end
+	end
+
+	snapshot.FireAnimations = Feature._snapshotAnimations(config)
+
+	Feature._originalModules[config] = snapshot
+end
+
+-- ============================================
+-- MODIFY CONFIG
+-- ============================================
+
+function Feature._modifyConfig(config, gunName)
+	if not Feature._enabled then
+		return
+	end
+
+	if type(config) ~= "table" then
+		return
+	end
+
+	if Feature._modifiedModules[config] then
+		return
+	end
+
+	local isEclipse = gunName == "Eclipse"
+
+	Feature._saveOriginal(config, isEclipse)
+
+	if isEclipse then
+		config.ExplosiveEnabled = true
+		config.ExplosionRadius = 30
+		config.ExplosionKnockbackPower = 150
+
+		config.ProjectileType = "Rocket"
+		config.Range = 9999
+		config.Lifetime = 60
+
+		config.CameraRecoilingEnabled = false
+		config.Recoil = 0
+		config.Spread = 0
+		config.CrossExpansion = 0
+
+		config.AmmoPerMag = math.huge
+		config.ReloadTime = 0
+		config.EquipTime = 0.01
+		config.ZeroDamageDistance = 9999
+		config.FullDamageDistance = 9999
+		config.BulletSpeed = 99999
+		config.CrossSize = 1
+
+		Feature._disableAnimations(config)
+
+		Feature._modifiedModules[config] = true
+		return
+	end
+
+	if config.FireRate == nil then
+		return
+	end
+
+	for key, value in pairs(Feature._modifiedStats) do
+		config[key] = value
+	end
+
+	Feature._disableAnimations(config)
+
+	Feature._modifiedModules[config] = true
+end
+
+-- ============================================
+-- RESTORE ORIGINAL SETTINGS
+-- ============================================
+
+function Feature._restoreGunMods()
+	for config, snapshot in pairs(Feature._originalModules) do
+		if type(config) == "table" and type(snapshot) == "table" then
+			for key, value in pairs(snapshot) do
+				if key ~= "FireAnimations" then
+					pcall(function()
+						config[key] = value
+					end)
+				end
+			end
+
+			pcall(function()
+				Feature._restoreAnimations(config, snapshot.FireAnimations)
+			end)
+		end
+	end
+
+	Feature._modifiedModules = setmetatable({}, { __mode = "k" })
+	Feature._originalModules = setmetatable({}, { __mode = "k" })
+end
+
+-- ============================================
+-- APPLY MODS
+-- ============================================
+
+function Feature._applyGunMods()
+	if not Feature._enabled or Feature._applying then
+		return
+	end
+
+	local gunFolder = Feature._getWeaponFolder()
+
+	if not gunFolder then
+		return
+	end
+
+	Feature._applying = true
+
+	pcall(function()
+		for _, weapon in ipairs(gunFolder:GetChildren()) do
+			if not Feature._enabled then
+				break
+			end
+
+			local setting = weapon:FindFirstChild("Setting")
+
+			if setting then
+				for _, module in ipairs(setting:GetChildren()) do
+					if not Feature._enabled then
+						break
+					end
+
+					local success, config = pcall(require, module)
+
+					if success and type(config) == "table" then
+						Feature._modifyConfig(config, weapon.Name)
+					end
+				end
+			end
+		end
+	end)
+
+	Feature._applying = false
+end
+
+-- ============================================
+-- QUEUED APPLY
+-- ============================================
+
+function Feature._queueApply()
+	if not Feature._enabled then
+		return
+	end
+
+	if Feature._applyQueued then
+		return
+	end
+
+	Feature._applyQueued = true
+
+	local generation = Feature._generation
+
+	local thread = task.defer(function()
+		if generation ~= Feature._generation then
+			return
+		end
+
+		Feature._applyQueued = false
+
+		if not Feature._enabled then
+			return
+		end
+
+		pcall(function()
+			Feature._applyGunMods()
+		end)
+	end)
+
+	trackTask(thread)
+end
+
+-- ============================================
+-- LIFECYCLE
+-- ============================================
+
+-- ============================================
+-- ENABLE
+-- ============================================
+
+function Feature.enable()
+	Feature.cleanup()
+
+	Feature._generation += 1
+	Feature._enabled = true
+
+	Feature._modifiedStats.FireRate = Feature._fireRate
+
+	Feature._queueApply()
+end
+
+-- ============================================
+-- DISABLE
+-- ============================================
+
+function Feature.disable()
+	Feature._enabled = false
+	Feature.cleanup()
+end
+
+-- ============================================
+-- ENABLED STATE
+-- ============================================
+
+function Feature.isEnabled()
+	return Feature._enabled == true
+end
+
+-- ============================================
+-- CLEANUP
+-- ============================================
+
+function Feature.cleanup()
+	Feature._enabled = false
+	Feature._generation += 1
+
+	Feature._applyQueued = false
+	Feature._applying = false
+
+	disconnectAllConnections()
+	cancelAllTasks()
+	destroyAllInstances()
+
+	pcall(function()
+		Feature._restoreGunMods()
+	end)
+
+	Feature._connections = {}
+	Feature._instances = {}
+	Feature._tasks = {}
+
+	Feature._modifiedModules = setmetatable({}, { __mode = "k" })
+	Feature._originalModules = setmetatable({}, { __mode = "k" })
+
+	Feature._applyQueued = false
+	Feature._applying = false
+end
+
+return Feature
