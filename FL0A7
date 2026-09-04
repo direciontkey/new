@@ -1,0 +1,522 @@
+local Feature = {
+	NAME = "Float",
+
+	_players = game:GetService("Players"),
+	_runService = game:GetService("RunService"),
+	_userInputService = game:GetService("UserInputService"),
+
+	_enabled = false,
+	_generation = 0,
+
+	_connections = {},
+	_instances = {},
+	_tasks = {},
+
+	_player = nil,
+	_playerGui = nil,
+
+	_floatGUI = nil,
+	_floatButton = nil,
+	_platform = nil,
+	_playerRoot = nil,
+
+	_floatOffset = -3.1,
+}
+
+-- ============================================
+-- CONSTANTS
+-- ============================================
+
+Feature._step = 0.5
+Feature._platformSize = Vector3.new(2, 0.2, 1.5)
+
+-- ============================================
+-- TRACKING HELPERS
+-- ============================================
+
+function Feature._safeDisconnect(connection)
+	if connection then
+		pcall(function()
+			connection:Disconnect()
+		end)
+	end
+end
+
+function Feature._safeDestroy(instance)
+	if instance then
+		pcall(function()
+			instance:Destroy()
+		end)
+	end
+end
+
+function Feature._safeCancel(thread)
+	if thread then
+		pcall(function()
+			task.cancel(thread)
+		end)
+	end
+end
+
+function Feature._trackConnection(connection)
+	if connection then
+		table.insert(Feature._connections, connection)
+	end
+
+	return connection
+end
+
+function Feature._trackInstance(instance)
+	if instance then
+		table.insert(Feature._instances, instance)
+	end
+
+	return instance
+end
+
+function Feature._trackTask(thread)
+	if thread then
+		table.insert(Feature._tasks, thread)
+	end
+
+	return thread
+end
+
+-- ============================================
+-- CHARACTER HELPERS
+-- ============================================
+
+function Feature._getRoot(character)
+	if not character then
+		return nil
+	end
+
+	return character:FindFirstChild("HumanoidRootPart")
+		or character:FindFirstChild("Torso")
+		or character:FindFirstChild("UpperTorso")
+end
+
+function Feature._getCharacter()
+	local player = Feature._player
+
+	if not player then
+		return nil
+	end
+
+	return player.Character
+end
+
+function Feature._getHumanoid(character)
+	if not character then
+		return nil
+	end
+
+	return character:FindFirstChildOfClass("Humanoid")
+end
+
+-- ============================================
+-- GUI HELPERS
+-- ============================================
+
+function Feature._updateButton()
+	if not Feature._floatButton then
+		return
+	end
+
+	Feature._floatButton.Text = Feature._enabled and "ON" or "OFF"
+end
+
+function Feature._removeFloatGUI()
+	if Feature._floatGUI then
+		Feature._safeDestroy(Feature._floatGUI)
+	end
+
+	Feature._floatGUI = nil
+	Feature._floatButton = nil
+end
+
+function Feature._createFloatGUI()
+	Feature._removeFloatGUI()
+
+	if not Feature._enabled or not Feature._playerGui then
+		return
+	end
+
+	local generation = Feature._generation
+
+	local screenGui = Instance.new("ScreenGui")
+	screenGui.Name = "FloatGUI"
+	screenGui.IgnoreGuiInset = true
+	screenGui.ResetOnSpawn = false
+	screenGui.Parent = Feature._playerGui
+
+	Feature._trackInstance(screenGui)
+	Feature._floatGUI = screenGui
+
+	local frame = Instance.new("Frame")
+	frame.Position = UDim2.new(0.5, 422, 0.5, -158)
+	frame.Size = UDim2.fromOffset(62, 58)
+	frame.BackgroundTransparency = 1
+	frame.BorderSizePixel = 0
+	frame.Parent = screenGui
+
+	Feature._trackInstance(frame)
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0.3, 0)
+	corner.Parent = frame
+
+	Feature._trackInstance(corner)
+
+	local button = Instance.new("TextButton")
+	button.Size = UDim2.fromScale(1, 1)
+	button.BackgroundColor3 = Color3.new(0, 0, 0)
+	button.BackgroundTransparency = 0.5
+	button.TextColor3 = Color3.new(1, 1, 1)
+	button.Font = Enum.Font.TitilliumWeb
+	button.TextSize = 23
+	button.BorderSizePixel = 0
+	button.Text = Feature._enabled and "ON" or "OFF"
+	button.Parent = frame
+
+	Feature._trackInstance(button)
+	Feature._floatButton = button
+
+	local buttonCorner = Instance.new("UICorner")
+	buttonCorner.CornerRadius = UDim.new(0.3, 0)
+	buttonCorner.Parent = button
+
+	Feature._trackInstance(buttonCorner)
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Color3.new(1, 1, 1)
+	stroke.Thickness = 1
+	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	stroke.Parent = button
+
+	Feature._trackInstance(stroke)
+
+	Feature._trackConnection(button.Activated:Connect(function()
+		if generation ~= Feature._generation or not Feature._enabled then
+			return
+		end
+
+		if Feature._platform then
+			Feature._stopFloat()
+		else
+			Feature._startFloat()
+		end
+
+		Feature._updateButton()
+	end))
+end
+
+-- ============================================
+-- FLOAT HELPERS
+-- ============================================
+
+function Feature._destroyPlatform()
+	if Feature._platform then
+		Feature._safeDestroy(Feature._platform)
+		Feature._platform = nil
+	end
+end
+
+function Feature._stopFloat()
+	Feature._destroyPlatform()
+
+	Feature._playerRoot = nil
+
+	Feature._floatOffset = -3.1
+
+	Feature._updateButton()
+end
+
+function Feature._startFloat()
+	if not Feature._enabled or Feature._platform then
+		return
+	end
+
+	local character = Feature._getCharacter()
+	local humanoid = Feature._getHumanoid(character)
+	local root = Feature._getRoot(character)
+
+	if not character or not humanoid or not root then
+		return
+	end
+
+	Feature._playerRoot = root
+	Feature._floatOffset = -3.1
+
+	local platform = Instance.new("Part")
+
+	platform.Name = "FloatPlatform"
+	platform.Size = Feature._platformSize
+	platform.Transparency = 1
+	platform.Anchored = true
+	platform.CanCollide = true
+	platform.CanTouch = false
+	platform.CanQuery = false
+	platform.CFrame =
+		root.CFrame * CFrame.new(0, Feature._floatOffset, 0)
+	platform.Parent = character
+
+	Feature._trackInstance(platform)
+	Feature._platform = platform
+
+	local generation = Feature._generation
+
+	Feature._trackConnection(
+		Feature._userInputService.InputBegan:Connect(function(input, processed)
+			if generation ~= Feature._generation
+				or not Feature._enabled
+				or not Feature._platform then
+				return
+			end
+
+			if processed then
+				return
+			end
+
+			if input.UserInputType ~= Enum.UserInputType.Keyboard then
+				return
+			end
+
+			if input.KeyCode == Enum.KeyCode.Q then
+				Feature._floatOffset -= Feature._step
+
+			elseif input.KeyCode == Enum.KeyCode.E then
+				Feature._floatOffset += Feature._step
+			end
+		end)
+	)
+
+	Feature._trackConnection(
+		Feature._userInputService.InputEnded:Connect(function(input)
+			if generation ~= Feature._generation
+				or not Feature._enabled
+				or not Feature._platform then
+				return
+			end
+
+			if input.UserInputType ~= Enum.UserInputType.Keyboard then
+				return
+			end
+
+			if input.KeyCode == Enum.KeyCode.Q then
+				Feature._floatOffset += Feature._step
+
+			elseif input.KeyCode == Enum.KeyCode.E then
+				Feature._floatOffset -= Feature._step
+			end
+		end)
+	)
+
+	Feature._trackConnection(
+		humanoid.Died:Connect(function()
+			if generation ~= Feature._generation then
+				return
+			end
+
+			Feature._stopFloat()
+		end)
+	)
+
+	Feature._trackConnection(
+		platform.AncestryChanged:Connect(function(_, parent)
+			if generation ~= Feature._generation
+				or not Feature._enabled then
+				return
+			end
+
+			if not parent then
+				Feature._platform = nil
+				Feature._playerRoot = nil
+				Feature._updateButton()
+			end
+		end)
+	)
+
+	Feature._trackConnection(
+		Feature._runService.Heartbeat:Connect(function()
+			if generation ~= Feature._generation
+				or not Feature._enabled then
+				return
+			end
+
+			local currentCharacter = Feature._getCharacter()
+			local currentRoot = Feature._getRoot(currentCharacter)
+			local currentPlatform = Feature._platform
+
+			if not currentPlatform
+				or not currentPlatform.Parent
+				or not currentRoot then
+
+				Feature._stopFloat()
+				return
+			end
+
+			Feature._playerRoot = currentRoot
+
+			currentPlatform.CFrame =
+				currentRoot.CFrame
+				* CFrame.new(0, Feature._floatOffset, 0)
+		end)
+	)
+
+	Feature._updateButton()
+end
+
+-- ============================================
+-- MONITORING / LIFECYCLE SETUP
+-- ============================================
+
+function Feature._setupCharacterMonitoring()
+	if not Feature._player then
+		return
+	end
+
+	local generation = Feature._generation
+
+	Feature._trackConnection(
+		Feature._player.CharacterAdded:Connect(function(character)
+			if generation ~= Feature._generation
+				or not Feature._enabled then
+				return
+			end
+
+			local hadFloat = Feature._platform ~= nil
+
+			Feature._stopFloat()
+
+			if not hadFloat then
+				return
+			end
+
+			local taskHandle = task.spawn(function()
+				local humanoid = character:WaitForChild("Humanoid", 5)
+
+				if generation ~= Feature._generation
+					or not Feature._enabled then
+					return
+				end
+
+				local root =
+					Feature._getRoot(character)
+					or character:WaitForChild("HumanoidRootPart", 5)
+
+				if generation ~= Feature._generation
+					or not Feature._enabled then
+					return
+				end
+
+				if not humanoid or not root then
+					return
+				end
+
+				task.wait(0.1)
+
+				if generation ~= Feature._generation
+					or not Feature._enabled then
+					return
+				end
+
+				Feature._startFloat()
+			end)
+
+			Feature._trackTask(taskHandle)
+		end)
+	)
+end
+
+-- ============================================
+-- LIFECYCLE
+-- ============================================
+
+function Feature.enable()
+	Feature.cleanup()
+
+	Feature._generation += 1
+	Feature._enabled = true
+
+	Feature._player = Feature._players.LocalPlayer
+
+	if not Feature._player then
+		Feature._enabled = false
+		Feature.cleanup()
+		return
+	end
+
+	local success, playerGui = pcall(function()
+		return Feature._player:WaitForChild("PlayerGui")
+	end)
+
+	if not success or not playerGui then
+		Feature._enabled = false
+		Feature.cleanup()
+		return
+	end
+
+	Feature._playerGui = playerGui
+
+	-- GUI is created when the feature is enabled.
+	-- The GUI button controls starting/stopping the actual float.
+	Feature._createFloatGUI()
+
+	Feature._setupCharacterMonitoring()
+end
+
+function Feature.disable()
+	Feature._enabled = false
+	Feature.cleanup()
+end
+
+function Feature.isEnabled()
+	return Feature._enabled
+end
+
+function Feature.cleanup()
+	Feature._enabled = false
+
+	Feature._generation += 1
+
+	-- Stop the actual float first.
+	Feature._stopFloat()
+
+	-- Disconnect every connection.
+	for _, connection in ipairs(Feature._connections) do
+		Feature._safeDisconnect(connection)
+	end
+
+	table.clear(Feature._connections)
+
+	-- Cancel every tracked task.
+	for _, thread in ipairs(Feature._tasks) do
+		Feature._safeCancel(thread)
+	end
+
+	table.clear(Feature._tasks)
+
+	-- Destroy every created instance.
+	for _, instance in ipairs(Feature._instances) do
+		Feature._safeDestroy(instance)
+	end
+
+	table.clear(Feature._instances)
+
+	-- Remove any GUI that may have survived tracking.
+	Feature._removeFloatGUI()
+
+	-- Reset runtime references/state.
+	Feature._player = nil
+	Feature._playerGui = nil
+	Feature._playerRoot = nil
+	Feature._platform = nil
+
+	Feature._floatGUI = nil
+	Feature._floatButton = nil
+
+	Feature._floatOffset = -3.1
+end
+
+return Feature
