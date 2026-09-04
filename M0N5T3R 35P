@@ -1,0 +1,446 @@
+local Feature = {
+	-- ============================================
+	-- FEATURE
+	-- ============================================
+
+	NAME = "Monster ESP",
+
+	-- ============================================
+	-- SERVICES
+	-- ============================================
+
+	_workspace = game:GetService("Workspace"),
+
+	-- ============================================
+	-- INTERNAL STATE
+	-- ============================================
+
+	_enabled = false,
+	_generation = 0,
+	_monstersFolder = nil,
+
+	_connections = {},
+	_instances = {},
+	_tasks = {},
+	_monsters = {},
+
+	_espColor = Color3.fromRGB(0, 255, 255),
+	_outlineColor = Color3.fromRGB(255, 255, 0),
+}
+
+-- ============================================
+-- RESOURCE HELPERS
+-- ============================================
+
+local function safeDisconnect(connection)
+	if connection then
+		pcall(function()
+			connection:Disconnect()
+		end)
+	end
+end
+
+local function safeDestroy(instance)
+	if instance then
+		pcall(function()
+			instance:Destroy()
+		end)
+	end
+end
+
+local function safeCancel(thread)
+	if thread then
+		pcall(function()
+			task.cancel(thread)
+		end)
+	end
+end
+
+local function trackConnection(connection)
+	table.insert(Feature._connections, connection)
+	return connection
+end
+
+local function trackInstance(instance)
+	table.insert(Feature._instances, instance)
+	return instance
+end
+
+local function trackTask(thread)
+	table.insert(Feature._tasks, thread)
+	return thread
+end
+
+local function isCurrentGeneration(generation)
+	return Feature._enabled
+		and Feature._generation == generation
+end
+
+-- ============================================
+-- MONSTER HELPERS
+-- ============================================
+
+local function getMonstersFolder()
+	local folder = Feature._monstersFolder
+
+	if folder and folder.Parent then
+		return folder
+	end
+
+	Feature._monstersFolder = nil
+
+	local candidate = Feature._workspace:FindFirstChild("Monsters")
+
+	if candidate and candidate:IsA("Folder") then
+		Feature._monstersFolder = candidate
+		return candidate
+	end
+
+	return nil
+end
+
+local function isMonster(model)
+	local folder = Feature._monstersFolder
+
+	return model
+		and model:IsA("Model")
+		and folder
+		and model:IsDescendantOf(folder)
+end
+
+local function getMonster(obj)
+	if not obj then
+		return nil
+	end
+
+	if obj:IsA("Model") then
+		return isMonster(obj) and obj or nil
+	end
+
+	local model = obj:FindFirstAncestorOfClass("Model")
+
+	return isMonster(model) and model or nil
+end
+
+local function getHumanoid(monster)
+	if not monster or not monster.Parent then
+		return nil
+	end
+
+	return monster:FindFirstChildWhichIsA("Humanoid", true)
+end
+
+-- ============================================
+-- ESP MANAGEMENT
+-- ============================================
+
+local function removeMonsterESP(monster)
+	local state = Feature._monsters[monster]
+
+	if not state then
+		return
+	end
+
+	if state.deathConnection then
+		safeDisconnect(state.deathConnection)
+		state.deathConnection = nil
+	end
+
+	if state.highlight then
+		safeDestroy(state.highlight)
+		state.highlight = nil
+	end
+
+	Feature._monsters[monster] = nil
+end
+
+local function createMonsterESP(monster, generation)
+	if not isCurrentGeneration(generation)
+		or not isMonster(monster) then
+		return
+	end
+
+	local state = Feature._monsters[monster]
+
+	if state and state.highlight then
+		return
+	end
+
+	local humanoid = getHumanoid(monster)
+
+	if not humanoid or humanoid.Health <= 0 then
+		return
+	end
+
+	state = state or {}
+	Feature._monsters[monster] = state
+
+	local highlight = Instance.new("Highlight")
+
+	highlight.Name = "MonsterESP"
+	highlight.FillColor = Feature._espColor
+	highlight.FillTransparency = 0.5
+	highlight.OutlineColor = Feature._outlineColor
+	highlight.OutlineTransparency = 0
+	highlight.Adornee = monster
+	highlight.Parent = monster
+
+	state.highlight = trackInstance(highlight)
+	state.humanoid = humanoid
+
+	local deathConnection
+
+	deathConnection = humanoid.Died:Connect(function()
+		if not isCurrentGeneration(generation) then
+			safeDisconnect(deathConnection)
+			return
+		end
+
+		removeMonsterESP(monster)
+	end)
+
+	state.deathConnection = trackConnection(deathConnection)
+end
+
+local function scheduleMonsterESP(monster, generation)
+	if not isCurrentGeneration(generation)
+		or not isMonster(monster) then
+		return
+	end
+
+	local state = Feature._monsters[monster]
+
+	if state and (state.highlight or state.pending) then
+		return
+	end
+
+	state = state or {}
+	state.pending = true
+
+	Feature._monsters[monster] = state
+
+	local worker
+
+	worker = task.spawn(function()
+		for _ = 1, 30 do
+			if not isCurrentGeneration(generation)
+				or not isMonster(monster) then
+				break
+			end
+
+			local currentState = Feature._monsters[monster]
+
+			if not currentState or currentState.highlight then
+				break
+			end
+
+			local humanoid = getHumanoid(monster)
+
+			if humanoid and humanoid.Health > 0 then
+				createMonsterESP(monster, generation)
+				break
+			end
+
+			task.wait(0.1)
+		end
+
+		local currentState = Feature._monsters[monster]
+
+		if currentState then
+			currentState.pending = nil
+		end
+	end)
+
+	trackTask(worker)
+end
+
+-- ============================================
+-- INITIAL SCAN
+-- ============================================
+
+local function scanMonsters(generation)
+	local folder = getMonstersFolder()
+
+	if not folder or not isCurrentGeneration(generation) then
+		return
+	end
+
+	for _, obj in ipairs(folder:GetDescendants()) do
+		if not isCurrentGeneration(generation) then
+			return
+		end
+
+		if obj:IsA("Model") then
+			createMonsterESP(obj, generation)
+		end
+	end
+end
+
+-- ============================================
+-- MONITORING
+-- ============================================
+
+local function connectMonsterFolder(folder, generation)
+	if not folder or not isCurrentGeneration(generation) then
+		return
+	end
+
+	trackConnection(folder.DescendantAdded:Connect(function(obj)
+		if not isCurrentGeneration(generation) then
+			return
+		end
+
+		if obj:IsA("Model") then
+			scheduleMonsterESP(obj, generation)
+			return
+		end
+
+		local monster = getMonster(obj)
+
+		if monster then
+			scheduleMonsterESP(monster, generation)
+		end
+	end))
+
+	trackConnection(folder.DescendantRemoving:Connect(function(obj)
+		if not isCurrentGeneration(generation) then
+			return
+		end
+
+		if obj:IsA("Model") then
+			if Feature._monsters[obj] then
+				removeMonsterESP(obj)
+			end
+
+			return
+		end
+
+		local monster = getMonster(obj)
+
+		if not monster then
+			return
+		end
+
+		local state = Feature._monsters[monster]
+
+		if obj:IsA("Humanoid") and state and state.humanoid == obj then
+			if state.deathConnection then
+				safeDisconnect(state.deathConnection)
+				state.deathConnection = nil
+			end
+
+			state.humanoid = nil
+		end
+
+		if not getHumanoid(monster) then
+			removeMonsterESP(monster)
+		end
+	end))
+end
+
+local function connectWorkspaceMonitoring(generation)
+	trackConnection(Feature._workspace.ChildAdded:Connect(function(child)
+		if not isCurrentGeneration(generation) then
+			return
+		end
+
+		if child.Name ~= "Monsters" or not child:IsA("Folder") then
+			return
+		end
+
+		Feature._monstersFolder = child
+
+		scanMonsters(generation)
+		connectMonsterFolder(child, generation)
+	end))
+
+	trackConnection(Feature._workspace.ChildRemoved:Connect(function(child)
+		if not isCurrentGeneration(generation) then
+			return
+		end
+
+		if child ~= Feature._monstersFolder then
+			return
+		end
+
+		Feature._monstersFolder = nil
+
+		for monster in pairs(Feature._monsters) do
+			removeMonsterESP(monster)
+		end
+	end))
+end
+
+-- ============================================
+-- ENABLE
+-- ============================================
+
+function Feature.enable()
+	Feature.cleanup()
+
+	Feature._generation += 1
+	Feature._enabled = true
+
+	local generation = Feature._generation
+	local folder = getMonstersFolder()
+
+	if folder then
+		scanMonsters(generation)
+		connectMonsterFolder(folder, generation)
+	end
+
+	connectWorkspaceMonitoring(generation)
+end
+
+-- ============================================
+-- DISABLE
+-- ============================================
+
+function Feature.disable()
+	Feature._enabled = false
+	Feature.cleanup()
+end
+
+-- ============================================
+-- ENABLED STATE
+-- ============================================
+
+function Feature.isEnabled()
+	return Feature._enabled
+end
+
+-- ============================================
+-- CLEANUP
+-- ============================================
+
+function Feature.cleanup()
+	Feature._generation += 1
+
+	for _, connection in ipairs(Feature._connections) do
+		safeDisconnect(connection)
+	end
+
+	table.clear(Feature._connections)
+
+	for _, thread in ipairs(Feature._tasks) do
+		safeCancel(thread)
+	end
+
+	table.clear(Feature._tasks)
+
+	for monster in pairs(Feature._monsters) do
+		removeMonsterESP(monster)
+	end
+
+	table.clear(Feature._monsters)
+
+	for _, instance in ipairs(Feature._instances) do
+		safeDestroy(instance)
+	end
+
+	table.clear(Feature._instances)
+
+	Feature._monstersFolder = nil
+end
+
+return Feature
