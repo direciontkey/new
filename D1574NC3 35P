@@ -1,0 +1,735 @@
+-- ============================================
+-- MONSTER DISTANCE DISPLAY FEATURE
+-- ============================================
+
+local Feature = {
+	NAME = "Distance ESP",
+
+	_players = game:GetService("Players"),
+	_runService = game:GetService("RunService"),
+	_workspace = game:GetService("Workspace"),
+
+	_enabled = false,
+	_generation = 0,
+
+	_connections = {},
+	_instances = {},
+	_tasks = {},
+
+	_monsters = {},
+	_monsterCache = {},
+
+	_monstersFolder = nil,
+	_playerRoot = nil,
+	_updateAccumulator = 0,
+}
+
+-- ============================================
+-- CONSTANTS
+-- ============================================
+
+Feature._bossPatterns = {
+	"SuperBoss_1",
+	"SuperBoss_2",
+	"SuperBoss_3",
+}
+
+Feature._colors = {
+	red = Color3.fromRGB(255, 50, 50),
+	orange = Color3.fromRGB(255, 150, 50),
+	yellow = Color3.fromRGB(255, 200, 50),
+	green = Color3.fromRGB(50, 255, 50),
+	blue = Color3.fromRGB(50, 200, 255),
+	purple = Color3.fromRGB(150, 150, 255),
+	white = Color3.new(1, 1, 1),
+}
+
+-- ============================================
+-- TRACKING HELPERS
+-- ============================================
+
+local function safeDisconnect(connection)
+	if connection then
+		pcall(function()
+			connection:Disconnect()
+		end)
+	end
+end
+
+local function safeDestroy(instance)
+	if instance then
+		pcall(function()
+			instance:Destroy()
+		end)
+	end
+end
+
+local function safeCancel(taskObject)
+	if taskObject then
+		pcall(function()
+			task.cancel(taskObject)
+		end)
+	end
+end
+
+function Feature._trackConnection(connection)
+	if connection then
+		Feature._connections[#Feature._connections + 1] = connection
+	end
+
+	return connection
+end
+
+function Feature._trackInstance(instance)
+	if instance then
+		Feature._instances[#Feature._instances + 1] = instance
+	end
+
+	return instance
+end
+
+function Feature._trackTask(taskObject)
+	if taskObject then
+		Feature._tasks[#Feature._tasks + 1] = taskObject
+	end
+
+	return taskObject
+end
+
+-- ============================================
+-- MONSTER HELPERS
+-- ============================================
+
+function Feature._isBoss(name)
+	for index = 1, #Feature._bossPatterns do
+		if string.find(name, Feature._bossPatterns[index], 1, true) then
+			return true
+		end
+	end
+
+	return false
+end
+
+function Feature._getMonsterRoot(monster)
+	if not monster then
+		return nil
+	end
+
+	return monster:FindFirstChild("HumanoidRootPart")
+		or monster:FindFirstChild("Head")
+		or monster:FindFirstChild("Torso")
+		or monster.PrimaryPart
+end
+
+function Feature._getHumanoid(monster)
+	if not monster then
+		return nil
+	end
+
+	return monster:FindFirstChildWhichIsA("Humanoid", true)
+end
+
+function Feature._isMonster(model)
+	if not model
+		or not model:IsA("Model")
+		or not Feature._monstersFolder
+	then
+		return false
+	end
+
+	return model:IsDescendantOf(Feature._monstersFolder)
+end
+
+function Feature._getMonsterFromObject(object)
+	if not object then
+		return nil
+	end
+
+	if object:IsA("Model") then
+		if Feature._isMonster(object) then
+			return object
+		end
+
+		return nil
+	end
+
+	local model = object:FindFirstAncestorOfClass("Model")
+
+	if Feature._isMonster(model) then
+		return model
+	end
+
+	return nil
+end
+
+function Feature._getDistanceColor(isBossMonster, distance)
+	if isBossMonster then
+		return Feature._colors.white
+	elseif distance < 50 then
+		return Feature._colors.red
+	elseif distance < 100 then
+		return Feature._colors.orange
+	elseif distance < 200 then
+		return Feature._colors.yellow
+	elseif distance < 500 then
+		return Feature._colors.green
+	elseif distance < 1000 then
+		return Feature._colors.blue
+	else
+		return Feature._colors.purple
+	end
+end
+
+-- ============================================
+-- MONSTER BILLBOARD
+-- ============================================
+
+function Feature._removeMonster(monster)
+	local data = Feature._monsters[monster]
+
+	if not data then
+		Feature._monsterCache[monster] = nil
+		return
+	end
+
+	safeDisconnect(data.healthConnection)
+	safeDisconnect(data.rootConnection)
+	safeCancel(data.rootTask)
+	safeDestroy(data.billboard)
+
+	Feature._monsters[monster] = nil
+	Feature._monsterCache[monster] = nil
+end
+
+function Feature._createDistanceBillboard(monster)
+	if not Feature._enabled
+		or not monster
+		or not monster.Parent
+		or Feature._monsters[monster]
+	then
+		return
+	end
+
+	local humanoid = Feature._getHumanoid(monster)
+
+	if not humanoid or humanoid.Health <= 0 then
+		return
+	end
+
+	local root = Feature._getMonsterRoot(monster)
+
+	if not root then
+		local generation = Feature._generation
+		local rootConnection
+		local rootTask
+
+		rootConnection = monster.ChildAdded:Connect(function(child)
+			if generation ~= Feature._generation
+				or not Feature._enabled
+				or not monster.Parent
+			then
+				safeDisconnect(rootConnection)
+				safeCancel(rootTask)
+				return
+			end
+
+			if child:IsA("BasePart") then
+				local newRoot = Feature._getMonsterRoot(monster)
+
+				if newRoot then
+					safeDisconnect(rootConnection)
+					safeCancel(rootTask)
+
+					Feature._createDistanceBillboard(monster)
+				end
+			end
+		end)
+
+		Feature._trackConnection(rootConnection)
+
+		rootTask = task.delay(5, function()
+			if generation ~= Feature._generation then
+				return
+			end
+
+			safeDisconnect(rootConnection)
+		end)
+
+		Feature._trackTask(rootTask)
+
+		return
+	end
+
+	local billboard = Feature._trackInstance(
+		Instance.new("BillboardGui")
+	)
+
+	billboard.Name = "MonsterDistance"
+	billboard.Adornee = root
+	billboard.Size = UDim2.fromOffset(150, 30)
+	billboard.StudsOffset = Vector3.new(0, 3.5, 0)
+	billboard.MaxDistance = 2000
+	billboard.AlwaysOnTop = true
+	billboard.Enabled = true
+
+	local label = Feature._trackInstance(
+		Instance.new("TextLabel")
+	)
+
+	label.Name = "Distance"
+	label.Size = UDim2.fromScale(1, 1)
+	label.BackgroundTransparency = 1
+	label.TextSize = 18
+	label.Font = Enum.Font.GothamBold
+	label.TextColor3 = Feature._colors.white
+	label.TextStrokeTransparency = 0.2
+	label.TextStrokeColor3 = Color3.new(0, 0, 0)
+
+	if Feature._playerRoot and Feature._playerRoot.Parent then
+		label.Text = tostring(
+			math.floor(
+				(Feature._playerRoot.Position - root.Position).Magnitude + 0.5
+			)
+		)
+	end
+
+	label.Parent = billboard
+	billboard.Parent = monster
+
+	local data = {
+		billboard = billboard,
+		label = label,
+		root = root,
+		isBoss = Feature._isBoss(monster.Name),
+		healthConnection = nil,
+		rootConnection = nil,
+		rootTask = nil,
+	}
+
+	data.healthConnection = humanoid.HealthChanged:Connect(function(health)
+		if not Feature._enabled then
+			return
+		end
+
+		if health <= 0 then
+			Feature._removeMonster(monster)
+		end
+	end)
+
+	Feature._trackConnection(data.healthConnection)
+
+	Feature._monsters[monster] = data
+end
+
+function Feature._registerMonster(monster)
+	if not Feature._enabled
+		or Feature._monsterCache[monster]
+		or not Feature._isMonster(monster)
+	then
+		return
+	end
+
+	local humanoid = Feature._getHumanoid(monster)
+
+	if not humanoid or humanoid.Health <= 0 then
+		return
+	end
+
+	Feature._monsterCache[monster] = true
+	Feature._createDistanceBillboard(monster)
+end
+
+function Feature._scanMonsters()
+	local monstersFolder = Feature._monstersFolder
+
+	if not monstersFolder then
+		return
+	end
+
+	for _, object in ipairs(monstersFolder:GetDescendants()) do
+		if not Feature._enabled then
+			return
+		end
+
+		if object:IsA("Model") then
+			Feature._registerMonster(object)
+		end
+	end
+end
+
+function Feature._clearDistanceBillboards()
+	for monster in pairs(Feature._monsters) do
+		Feature._removeMonster(monster)
+	end
+
+	table.clear(Feature._monsters)
+	table.clear(Feature._monsterCache)
+end
+
+-- ============================================
+-- MONSTERS FOLDER
+-- ============================================
+
+function Feature._setupMonstersFolder()
+	if not Feature._enabled then
+		return false
+	end
+
+	local monstersFolder = Feature._workspace:FindFirstChild("Monsters")
+
+	if not monstersFolder then
+		Feature._monstersFolder = nil
+		return false
+	end
+
+	Feature._monstersFolder = monstersFolder
+
+	Feature._scanMonsters()
+
+	if not Feature._enabled
+		or Feature._monstersFolder ~= monstersFolder
+	then
+		return false
+	end
+
+	local generation = Feature._generation
+
+	Feature._trackConnection(
+		monstersFolder.DescendantAdded:Connect(function(object)
+			if not Feature._enabled
+				or generation ~= Feature._generation
+			then
+				return
+			end
+
+			if object:IsA("Model") then
+				Feature._registerMonster(object)
+				return
+			end
+
+			local monster = Feature._getMonsterFromObject(object)
+
+			if monster then
+				Feature._registerMonster(monster)
+			end
+		end)
+	)
+
+	-- ==========================================
+	-- IMPORTANT:
+	-- Only react when the actual monster Model
+	-- is removed.
+	--
+	-- Do NOT use _getMonsterFromObject() here.
+	-- Otherwise destroying a child such as:
+	-- Highlight / BillboardGui / Part
+	-- would be interpreted as destroying the
+	-- entire monster.
+	-- ==========================================
+
+	Feature._trackConnection(
+		monstersFolder.DescendantRemoving:Connect(function(object)
+			if generation ~= Feature._generation then
+				return
+			end
+
+			if object:IsA("Model")
+				and Feature._monsters[object]
+			then
+				Feature._removeMonster(object)
+			end
+		end)
+	)
+
+	return true
+end
+
+-- ============================================
+-- FOLDER LIFECYCLE
+-- ============================================
+
+function Feature._setupFolderLifecycle()
+	local generation = Feature._generation
+
+	Feature._trackConnection(
+		Feature._workspace.ChildAdded:Connect(function(child)
+			if not Feature._enabled
+				or generation ~= Feature._generation
+			then
+				return
+			end
+
+			if child.Name == "Monsters"
+				and not Feature._monstersFolder
+			then
+				Feature._setupMonstersFolder()
+			end
+		end)
+	)
+
+	Feature._trackConnection(
+		Feature._workspace.ChildRemoved:Connect(function(child)
+			if generation ~= Feature._generation then
+				return
+			end
+
+			if child == Feature._monstersFolder then
+				Feature._clearDistanceBillboards()
+				Feature._monstersFolder = nil
+			end
+		end)
+	)
+end
+
+-- ============================================
+-- CHARACTER
+-- ============================================
+
+function Feature._updateCharacterRoot(character)
+	if not Feature._enabled or not character then
+		return
+	end
+
+	Feature._playerRoot =
+		character:FindFirstChild("HumanoidRootPart")
+		or character:FindFirstChild("Torso")
+end
+
+function Feature._setupCharacter()
+	local player = Feature._players.LocalPlayer
+
+	if not player then
+		return
+	end
+
+	if player.Character then
+		Feature._updateCharacterRoot(player.Character)
+	end
+
+	local generation = Feature._generation
+
+	Feature._trackConnection(
+		player.CharacterAdded:Connect(function(character)
+			if generation ~= Feature._generation
+				or not Feature._enabled
+			then
+				return
+			end
+
+			Feature._updateCharacterRoot(character)
+
+			if Feature._playerRoot then
+				return
+			end
+
+			local rootTask = task.spawn(function()
+				local root =
+					character:WaitForChild(
+						"HumanoidRootPart",
+						5
+					)
+
+				if generation ~= Feature._generation
+					or not Feature._enabled
+				then
+					return
+				end
+
+				if root then
+					Feature._playerRoot = root
+				else
+					Feature._playerRoot =
+						character:FindFirstChild("Torso")
+				end
+			end)
+
+			Feature._trackTask(rootTask)
+		end)
+	)
+
+	Feature._trackConnection(
+		player.CharacterRemoving:Connect(function(character)
+			if generation ~= Feature._generation then
+				return
+			end
+
+			if Feature._playerRoot
+				and Feature._playerRoot:IsDescendantOf(character)
+			then
+				Feature._playerRoot = nil
+			else
+				Feature._playerRoot = nil
+			end
+		end)
+	)
+end
+
+-- ============================================
+-- DISTANCE UPDATE
+-- ============================================
+
+function Feature._setupUpdateLoop()
+	local generation = Feature._generation
+
+	Feature._trackConnection(
+		Feature._runService.Heartbeat:Connect(function(delta)
+			if not Feature._enabled
+				or generation ~= Feature._generation
+			then
+				return
+			end
+
+			Feature._updateAccumulator += delta
+
+			if Feature._updateAccumulator < 0.1 then
+				return
+			end
+
+			Feature._updateAccumulator = 0
+
+			local playerRoot = Feature._playerRoot
+
+			if not playerRoot or not playerRoot.Parent then
+				local player = Feature._players.LocalPlayer
+				local character = player and player.Character
+
+				if character then
+					playerRoot =
+						character:FindFirstChild("HumanoidRootPart")
+						or character:FindFirstChild("Torso")
+
+					Feature._playerRoot = playerRoot
+				end
+			end
+
+			if not playerRoot or not playerRoot.Parent then
+				return
+			end
+
+			local playerPosition = playerRoot.Position
+
+			for monster, data in pairs(Feature._monsters) do
+				if not Feature._enabled
+					or generation ~= Feature._generation
+				then
+					return
+				end
+
+				if not monster.Parent
+					or not data.billboard.Parent
+					or not data.root.Parent
+				then
+					Feature._removeMonster(monster)
+					continue
+				end
+
+				local distance =
+					(playerPosition - data.root.Position).Magnitude
+
+				local text =
+					tostring(math.floor(distance + 0.5))
+
+				if data.label.Text ~= text then
+					data.label.Text = text
+				end
+
+				local color =
+					Feature._getDistanceColor(
+						data.isBoss,
+						distance
+					)
+
+				if data.label.TextColor3 ~= color then
+					data.label.TextColor3 = color
+				end
+			end
+		end)
+	)
+end
+
+-- ============================================
+-- ENABLE
+-- ============================================
+
+function Feature.enable()
+	Feature.cleanup()
+
+	Feature._generation += 1
+	Feature._enabled = true
+	Feature._updateAccumulator = 0
+
+	Feature._setupCharacter()
+	Feature._setupFolderLifecycle()
+	Feature._setupMonstersFolder()
+	Feature._setupUpdateLoop()
+end
+
+-- ============================================
+-- DISABLE
+-- ============================================
+
+function Feature.disable()
+	Feature._enabled = false
+	Feature.cleanup()
+end
+
+-- ============================================
+-- ENABLED STATE
+-- ============================================
+
+function Feature.isEnabled()
+	return Feature._enabled == true
+end
+
+-- ============================================
+-- CLEANUP
+-- ============================================
+
+function Feature.cleanup()
+	Feature._enabled = false
+	Feature._generation += 1
+
+	for index = #Feature._connections, 1, -1 do
+		safeDisconnect(Feature._connections[index])
+		Feature._connections[index] = nil
+	end
+
+	for index = #Feature._tasks, 1, -1 do
+		safeCancel(Feature._tasks[index])
+		Feature._tasks[index] = nil
+	end
+
+	for monster in pairs(Feature._monsters) do
+		local data = Feature._monsters[monster]
+
+		if data then
+			safeDisconnect(data.healthConnection)
+			safeDisconnect(data.rootConnection)
+			safeCancel(data.rootTask)
+			safeDestroy(data.billboard)
+		end
+
+		Feature._monsters[monster] = nil
+	end
+
+	for index = #Feature._instances, 1, -1 do
+		safeDestroy(Feature._instances[index])
+		Feature._instances[index] = nil
+	end
+
+	table.clear(Feature._monsters)
+	table.clear(Feature._monsterCache)
+
+	Feature._connections = {}
+	Feature._instances = {}
+	Feature._tasks = {}
+
+	Feature._monsters = {}
+	Feature._monsterCache = {}
+
+	Feature._monstersFolder = nil
+	Feature._playerRoot = nil
+	Feature._updateAccumulator = 0
+end
+
+return Feature
