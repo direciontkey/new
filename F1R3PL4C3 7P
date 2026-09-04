@@ -1,0 +1,311 @@
+-- ============================================
+-- FIRE TELEPORT
+-- ============================================
+
+local Feature = {
+	NAME = "Fire Teleport",
+	_players = game:GetService("Players"),
+	_workspace = game:GetService("Workspace"),
+	_enabled = false,
+	_generation = 0,
+	_connections = {},
+	_instances = {},
+	_tasks = {},
+	_player = nil,
+	_playerGui = nil,
+	_firePrompt = nil,
+	_fireTeleportGUI = nil,
+}
+
+-- ============================================
+-- TRACKING HELPERS
+-- ============================================
+
+function Feature._safeDisconnect(connection)
+	if connection then
+		pcall(function()
+			connection:Disconnect()
+		end)
+	end
+end
+
+function Feature._safeDestroy(instance)
+	if instance then
+		pcall(function()
+			instance:Destroy()
+		end)
+	end
+end
+
+function Feature._safeCancel(thread)
+	if thread then
+		pcall(function()
+			task.cancel(thread)
+		end)
+	end
+end
+
+function Feature._trackConnection(connection)
+	if connection then
+		Feature._connections[#Feature._connections + 1] = connection
+	end
+	return connection
+end
+
+function Feature._trackInstance(instance)
+	if instance then
+		Feature._instances[#Feature._instances + 1] = instance
+	end
+	return instance
+end
+
+function Feature._trackTask(thread)
+	if thread then
+		Feature._tasks[#Feature._tasks + 1] = thread
+	end
+	return thread
+end
+
+-- ============================================
+-- GET FIRE PROMPT
+-- ============================================
+
+function Feature._getFirePrompt()
+	if Feature._firePrompt and Feature._firePrompt.Parent then
+		return Feature._firePrompt
+	end
+
+	local special = Feature._workspace:FindFirstChild("Special")
+	local clientTrain = special and special:FindFirstChild("ClientTrain")
+	local firePlace = clientTrain and clientTrain:FindFirstChild("FirePlacePrompt")
+
+	if not firePlace then
+		return nil
+	end
+
+	Feature._firePrompt = firePlace:FindFirstChildOfClass("ProximityPrompt")
+
+	return Feature._firePrompt
+end
+
+-- ============================================
+-- TELEPORT
+-- ============================================
+
+function Feature._teleportToFire()
+	local player = Feature._player
+	local character = player and player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+
+	if not root then
+		return
+	end
+
+	local prompt = Feature._getFirePrompt()
+
+	if not prompt then
+		return
+	end
+
+	local parent = prompt.Parent
+
+	if not parent then
+		return
+	end
+
+	local position
+
+	if parent:IsA("BasePart") then
+		position = parent.Position
+	elseif parent:IsA("Attachment") then
+		position = parent.WorldPosition
+	else
+		local part = parent:FindFirstChildWhichIsA("BasePart")
+
+		if not part then
+			return
+		end
+
+		position = part.Position
+	end
+
+	root.CFrame = CFrame.new(position + Vector3.new(0, 3, 0))
+end
+
+-- ============================================
+-- REMOVE GUI
+-- ============================================
+
+function Feature._removeFireTeleportGUI()
+	if Feature._fireTeleportGUI then
+		Feature._safeDestroy(Feature._fireTeleportGUI)
+		Feature._fireTeleportGUI = nil
+	end
+
+	local playerGui = Feature._playerGui
+
+	if playerGui then
+		local existing = playerGui:FindFirstChild("FireTeleportGUI")
+
+		if existing then
+			Feature._safeDestroy(existing)
+		end
+	end
+end
+
+-- ============================================
+-- CREATE GUI
+-- ============================================
+
+function Feature._createFireTeleportGUI()
+	Feature._removeFireTeleportGUI()
+
+	local screenGui = Feature._trackInstance(Instance.new("ScreenGui"))
+	screenGui.Name = "FireTeleportGUI"
+	screenGui.IgnoreGuiInset = true
+	screenGui.ResetOnSpawn = false
+	screenGui.Parent = Feature._playerGui
+
+	Feature._fireTeleportGUI = screenGui
+
+	local frame = Feature._trackInstance(Instance.new("Frame"))
+	frame.Position = UDim2.new(0.5, 269, 0.5, 184)
+	frame.Size = UDim2.fromOffset(46, 46)
+	frame.BackgroundColor3 = Color3.fromRGB(50, 50, 70)
+	frame.BackgroundTransparency = 0.3
+	frame.BorderSizePixel = 0
+	frame.Parent = screenGui
+
+	local corner = Feature._trackInstance(Instance.new("UICorner"))
+	corner.CornerRadius = UDim.new(0, 8)
+	corner.Parent = frame
+
+	local outline = Feature._trackInstance(Instance.new("UIStroke"))
+	outline.Name = "MainOutline"
+	outline.Color = Color3.new(1, 1, 1)
+	outline.Thickness = 1
+	outline.Transparency = 0.2
+	outline.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	outline.Parent = frame
+
+	local button = Feature._trackInstance(Instance.new("TextButton"))
+	button.Size = UDim2.fromOffset(34, 34)
+	button.Position = UDim2.fromOffset(6, 6)
+	button.BackgroundColor3 = Color3.fromRGB(200, 100, 0)
+	button.BackgroundTransparency = 0.3
+	button.BorderSizePixel = 0
+	button.Text = "🔥"
+	button.TextColor3 = Color3.new(1, 1, 1)
+	button.TextSize = 16
+	button.FontFace = Font.new(
+		"rbxasset://fonts/families/SourceSansPro.json",
+		Enum.FontWeight.Bold
+	)
+	button.Parent = frame
+
+	local buttonCorner = Feature._trackInstance(Instance.new("UICorner"))
+	buttonCorner.CornerRadius = UDim.new(0, 4)
+	buttonCorner.Parent = button
+
+	local buttonOutline = Feature._trackInstance(Instance.new("UIStroke"))
+	buttonOutline.Name = "ButtonOutline"
+	buttonOutline.Color = Color3.new(1, 1, 1)
+	buttonOutline.Thickness = 1
+	buttonOutline.Transparency = 0.4
+	buttonOutline.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	buttonOutline.Parent = button
+
+	Feature._trackConnection(
+		button.Activated:Connect(function()
+			if not Feature._enabled then
+				return
+			end
+
+			Feature._teleportToFire()
+		end)
+	)
+
+	return screenGui
+end
+
+-- ============================================
+-- ENABLE
+-- ============================================
+
+function Feature.enable()
+	Feature.cleanup()
+	Feature._generation += 1
+	Feature._enabled = true
+	Feature._player = Feature._players.LocalPlayer
+
+	if not Feature._player then
+		Feature._enabled = false
+		return
+	end
+
+	local success, playerGui = pcall(function()
+		return Feature._player:WaitForChild("PlayerGui")
+	end)
+
+	if not success or not playerGui then
+		Feature._enabled = false
+		return
+	end
+
+	Feature._playerGui = playerGui
+	Feature._firePrompt = nil
+	Feature._createFireTeleportGUI()
+end
+
+-- ============================================
+-- DISABLE
+-- ============================================
+
+function Feature.disable()
+	Feature._enabled = false
+	Feature.cleanup()
+end
+
+-- ============================================
+-- IS ENABLED
+-- ============================================
+
+function Feature.isEnabled()
+	return Feature._enabled
+end
+
+-- ============================================
+-- CLEANUP
+-- ============================================
+
+function Feature.cleanup()
+	Feature._enabled = false
+	Feature._generation += 1
+
+	for index, connection in pairs(Feature._connections) do
+		Feature._safeDisconnect(connection)
+		Feature._connections[index] = nil
+	end
+
+	Feature._connections = {}
+
+	for index, thread in pairs(Feature._tasks) do
+		Feature._safeCancel(thread)
+		Feature._tasks[index] = nil
+	end
+
+	Feature._tasks = {}
+
+	for index, instance in pairs(Feature._instances) do
+		Feature._safeDestroy(instance)
+		Feature._instances[index] = nil
+	end
+
+	Feature._instances = {}
+	Feature._fireTeleportGUI = nil
+	Feature._firePrompt = nil
+	Feature._player = nil
+	Feature._playerGui = nil
+end
+
+return Feature
