@@ -1,0 +1,271 @@
+-- ============================================
+-- TREE HIDE/SHOW FEATURE
+-- ============================================
+
+local Feature = {
+	NAME = "Delete Trees",
+
+	_workspace = game:GetService("Workspace"),
+
+	_enabled = false,
+	_generation = 0,
+
+	_connections = {},
+	_instances = {},
+	_tasks = {},
+
+	_hiddenTrees = {},
+}
+
+-- ============================================
+-- RESOURCE HELPERS
+-- ============================================
+
+local function safeDisconnect(connection)
+	if connection then
+		pcall(function()
+			connection:Disconnect()
+		end)
+	end
+end
+
+local function safeDestroy(instance)
+	if instance then
+		pcall(function()
+			instance:Destroy()
+		end)
+	end
+end
+
+local function safeCancel(taskObject)
+	if taskObject then
+		pcall(function()
+			task.cancel(taskObject)
+		end)
+	end
+end
+
+local function trackConnection(connection)
+	if connection then
+		Feature._connections[#Feature._connections + 1] = connection
+	end
+
+	return connection
+end
+
+local function trackInstance(instance)
+	if instance then
+		Feature._instances[#Feature._instances + 1] = instance
+	end
+
+	return instance
+end
+
+local function trackTask(taskObject)
+	if taskObject then
+		Feature._tasks[#Feature._tasks + 1] = taskObject
+	end
+
+	return taskObject
+end
+
+local function disconnectAllConnections()
+	for index, connection in pairs(Feature._connections) do
+		safeDisconnect(connection)
+		Feature._connections[index] = nil
+	end
+end
+
+local function cancelAllTasks()
+	for index, taskObject in pairs(Feature._tasks) do
+		safeCancel(taskObject)
+		Feature._tasks[index] = nil
+	end
+end
+
+local function destroyAllInstances()
+	for index, instance in pairs(Feature._instances) do
+		safeDestroy(instance)
+		Feature._instances[index] = nil
+	end
+end
+
+-- ============================================
+-- TREE HELPERS
+-- ============================================
+
+local function isTreeObject(object)
+	if not object then
+		return false
+	end
+
+	return string.find(object.Name:lower(), "tree", 1, true) ~= nil
+end
+
+local function hidePart(part)
+	if not Feature._enabled then
+		return false
+	end
+
+	if not part or not part:IsA("BasePart") then
+		return false
+	end
+
+	if Feature._hiddenTrees[part] then
+		return false
+	end
+
+	local success = pcall(function()
+		Feature._hiddenTrees[part] = {
+			transparency = part.Transparency,
+			canCollide = part.CanCollide,
+		}
+
+		part.Transparency = 1
+		part.CanCollide = false
+	end)
+
+	if not success then
+		Feature._hiddenTrees[part] = nil
+		return false
+	end
+
+	return true
+end
+
+local function hideTreeObject(object)
+	if not Feature._enabled then
+		return
+	end
+
+	if not object or not object.Parent then
+		return
+	end
+
+	if object:IsA("BasePart") then
+		hidePart(object)
+		return
+	end
+
+	if not object:IsA("Model") and not object:IsA("Folder") then
+		return
+	end
+
+	for _, descendant in ipairs(object:GetDescendants()) do
+		if not Feature._enabled then
+			return
+		end
+
+		hidePart(descendant)
+	end
+end
+
+local function scanTrees()
+	if not Feature._enabled then
+		return
+	end
+
+	for _, object in ipairs(Feature._workspace:GetDescendants()) do
+		if not Feature._enabled then
+			return
+		end
+
+		if isTreeObject(object) then
+			hideTreeObject(object)
+		end
+	end
+end
+
+local function restoreTrees()
+	for part, original in pairs(Feature._hiddenTrees) do
+		if type(original) == "table" then
+			pcall(function()
+				if part and part.Parent then
+					part.Transparency = original.transparency
+					part.CanCollide = original.canCollide
+				end
+			end)
+		end
+	end
+
+	table.clear(Feature._hiddenTrees)
+end
+
+-- ============================================
+-- LIFECYCLE
+-- ============================================
+
+-- ============================================
+-- ENABLE
+-- ============================================
+
+function Feature.enable()
+	Feature.cleanup()
+
+	Feature._generation += 1
+	Feature._enabled = true
+
+	local generation = Feature._generation
+
+	scanTrees()
+
+	trackConnection(Feature._workspace.DescendantAdded:Connect(function(object)
+		if not Feature._enabled or generation ~= Feature._generation then
+			return
+		end
+
+		if isTreeObject(object) then
+			hideTreeObject(object)
+			return
+		end
+
+		if object:IsA("BasePart") then
+			local parent = object.Parent
+
+			if parent and isTreeObject(parent) then
+				hidePart(object)
+			end
+		end
+	end))
+end
+
+-- ============================================
+-- DISABLE
+-- ============================================
+
+function Feature.disable()
+	Feature._enabled = false
+	Feature.cleanup()
+end
+
+-- ============================================
+-- ENABLED STATE
+-- ============================================
+
+function Feature.isEnabled()
+	return Feature._enabled == true
+end
+
+-- ============================================
+-- CLEANUP
+-- ============================================
+
+function Feature.cleanup()
+	Feature._enabled = false
+	Feature._generation += 1
+
+	disconnectAllConnections()
+	cancelAllTasks()
+	destroyAllInstances()
+
+	pcall(function()
+		restoreTrees()
+	end)
+
+	Feature._connections = {}
+	Feature._instances = {}
+	Feature._tasks = {}
+	Feature._hiddenTrees = {}
+end
+
+return Feature
