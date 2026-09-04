@@ -1,25 +1,23 @@
+-- ============================================
+-- FLOAT
+-- ============================================
+
 local Feature = {
 	NAME = "Float",
-
 	_players = game:GetService("Players"),
 	_runService = game:GetService("RunService"),
 	_userInputService = game:GetService("UserInputService"),
-
 	_enabled = false,
 	_generation = 0,
-
 	_connections = {},
 	_instances = {},
 	_tasks = {},
-
 	_player = nil,
 	_playerGui = nil,
-
 	_floatGUI = nil,
 	_floatButton = nil,
 	_platform = nil,
 	_playerRoot = nil,
-
 	_floatOffset = -3.1,
 }
 
@@ -123,7 +121,7 @@ function Feature._updateButton()
 		return
 	end
 
-	Feature._floatButton.Text = Feature._enabled and "ON" or "OFF"
+	Feature._floatButton.Text = Feature._platform and "ON" or "OFF"
 end
 
 function Feature._removeFloatGUI()
@@ -176,7 +174,7 @@ function Feature._createFloatGUI()
 	button.Font = Enum.Font.TitilliumWeb
 	button.TextSize = 23
 	button.BorderSizePixel = 0
-	button.Text = Feature._enabled and "ON" or "OFF"
+	button.Text = Feature._platform and "ON" or "OFF"
 	button.Parent = frame
 
 	Feature._trackInstance(button)
@@ -226,7 +224,6 @@ function Feature._stopFloat()
 	Feature._destroyPlatform()
 
 	Feature._playerRoot = nil
-
 	Feature._floatOffset = -3.1
 
 	Feature._updateButton()
@@ -284,7 +281,6 @@ function Feature._startFloat()
 
 			if input.KeyCode == Enum.KeyCode.Q then
 				Feature._floatOffset -= Feature._step
-
 			elseif input.KeyCode == Enum.KeyCode.E then
 				Feature._floatOffset += Feature._step
 			end
@@ -305,7 +301,6 @@ function Feature._startFloat()
 
 			if input.KeyCode == Enum.KeyCode.Q then
 				Feature._floatOffset += Feature._step
-
 			elseif input.KeyCode == Enum.KeyCode.E then
 				Feature._floatOffset -= Feature._step
 			end
@@ -351,7 +346,6 @@ function Feature._startFloat()
 			if not currentPlatform
 				or not currentPlatform.Parent
 				or not currentRoot then
-
 				Feature._stopFloat()
 				return
 			end
@@ -430,7 +424,7 @@ function Feature._setupCharacterMonitoring()
 end
 
 -- ============================================
--- LIFECYCLE
+-- ENABLE
 -- ============================================
 
 function Feature.enable()
@@ -458,64 +452,63 @@ function Feature.enable()
 	end
 
 	Feature._playerGui = playerGui
-
-	-- GUI is created when the feature is enabled.
-	-- The GUI button controls starting/stopping the actual float.
 	Feature._createFloatGUI()
-
 	Feature._setupCharacterMonitoring()
 end
+
+-- ============================================
+-- DISABLE
+-- ============================================
 
 function Feature.disable()
 	Feature._enabled = false
 	Feature.cleanup()
 end
 
+-- ============================================
+-- IS ENABLED
+-- ============================================
+
 function Feature.isEnabled()
 	return Feature._enabled
 end
 
+-- ============================================
+-- CLEANUP
+-- ============================================
+
 function Feature.cleanup()
 	Feature._enabled = false
-
 	Feature._generation += 1
 
-	-- Stop the actual float first.
 	Feature._stopFloat()
 
-	-- Disconnect every connection.
 	for _, connection in ipairs(Feature._connections) do
 		Feature._safeDisconnect(connection)
 	end
 
 	table.clear(Feature._connections)
 
-	-- Cancel every tracked task.
 	for _, thread in ipairs(Feature._tasks) do
 		Feature._safeCancel(thread)
 	end
 
 	table.clear(Feature._tasks)
 
-	-- Destroy every created instance.
 	for _, instance in ipairs(Feature._instances) do
 		Feature._safeDestroy(instance)
 	end
 
 	table.clear(Feature._instances)
 
-	-- Remove any GUI that may have survived tracking.
 	Feature._removeFloatGUI()
 
-	-- Reset runtime references/state.
 	Feature._player = nil
 	Feature._playerGui = nil
 	Feature._playerRoot = nil
 	Feature._platform = nil
-
 	Feature._floatGUI = nil
 	Feature._floatButton = nil
-
 	Feature._floatOffset = -3.1
 end
 
