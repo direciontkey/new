@@ -1,22 +1,16 @@
--- ============================================================
+-- ============================================
 -- SAVE MANAGER
--- ============================================================
+-- ============================================
+
+local HttpService = game:GetService("HttpService")
 
 local SaveManager = {
 	NAME = "Save Manager",
 
-	-- ================================
-	-- Runtime state
-	-- ================================
-	_enabled = false,
-	_generation = 0,
-
-	-- ================================
-	-- Save state
-	-- ================================
 	File = "FeatureManager.json",
 
 	Features = {},
+
 	Main = nil,
 	MiniButton = nil,
 
@@ -25,17 +19,14 @@ local SaveManager = {
 
 	Loaded = false,
 
-	-- ================================
-	-- Runtime tracking
-	-- ================================
 	_connections = {},
 	_instances = {},
 	_tasks = {},
 }
 
--- ============================================================
--- COMPATIBILITY FUNCTIONS
--- ============================================================
+-- ============================================
+-- Executor Compatibility
+-- ============================================
 
 local cloneref = cloneref
 	or clonereference
@@ -64,84 +55,109 @@ local isfileFunction =
 	and clonefunction(isfile)
 	or nil
 
--- ============================================================
--- HELPERS
--- ============================================================
+-- ============================================
+-- Helpers
+-- ============================================
 
-local function encodeUDim2(value)
-	if typeof(value) ~= "UDim2" then
-		return nil
-	end
-
-	return {
-		xScale = value.X.Scale,
-		xOffset = value.X.Offset,
-		yScale = value.Y.Scale,
-		yOffset = value.Y.Offset,
-	}
+local function canUseFileSystem()
+	return
+		type(writefileFunction) == "function"
+		and type(readfileFunction) == "function"
+		and type(isfileFunction) == "function"
 end
 
-local function decodeUDim2(value)
-	if type(value) ~= "table" then
-		return nil
-	end
-
-	if type(value.xScale) ~= "number"
-		or type(value.xOffset) ~= "number"
-		or type(value.yScale) ~= "number"
-		or type(value.yOffset) ~= "number"
-	then
-		return nil
-	end
-
-	return UDim2.new(
-		value.xScale,
-		value.xOffset,
-		value.yScale,
-		value.yOffset
-	)
-end
-
-local function safeFeatureState(feature)
-	if type(feature) ~= "table"
-		or type(feature.isEnabled) ~= "function"
-	then
+local function safeIsFile(path)
+	if not canUseFileSystem() then
 		return false
 	end
 
-	local success, result = pcall(feature.isEnabled)
+	local success, result = pcall(function()
+		return isfileFunction(path)
+	end)
 
 	return success and result == true
 end
 
--- ============================================================
--- FEATURE / WINDOW REGISTRATION
--- ============================================================
+local function safeReadFile(path)
+	if not canUseFileSystem() then
+		return nil
+	end
+
+	local success, result = pcall(function()
+		return readfileFunction(path)
+	end)
+
+	if not success then
+		return nil
+	end
+
+	return result
+end
+
+local function safeWriteFile(path, data)
+	if not canUseFileSystem() then
+		return false
+	end
+
+	local success = pcall(function()
+		writefileFunction(path, data)
+	end)
+
+	return success
+end
+
+local function encode(data)
+	local success, result = pcall(function()
+		return HttpService:JSONEncode(data)
+	end)
+
+	if not success then
+		return nil
+	end
+
+	return result
+end
+
+local function decode(data)
+	local success, result = pcall(function()
+		return HttpService:JSONDecode(data)
+	end)
+
+	if not success or type(result) ~= "table" then
+		return nil
+	end
+
+	return result
+end
+
+-- ============================================
+-- Feature State
+-- ============================================
 
 function SaveManager:SetFeatures(features)
 	if type(features) ~= "table" then
 		self.Features = {}
-		return false
+		return
 	end
 
 	self.Features = features
-
-	return true
 end
 
-function SaveManager:SetWindow(MainWindow, Mini)
-	self.Main = MainWindow
-	self.MiniButton = Mini
+-- ============================================
+-- Window References
+-- ============================================
 
-	return true
+function SaveManager:SetWindow(main, miniButton)
+	self.Main = main
+	self.MiniButton = miniButton
 end
 
--- ============================================================
--- THEME REGISTRATION
--- ============================================================
+-- ============================================
+-- Theme
+-- ============================================
 
 function SaveManager:SetTheme(themeName)
-	if type(themeName) ~= "string" or themeName == "" then
+	if type(themeName) ~= "string" then
 		return false
 	end
 
@@ -158,325 +174,298 @@ function SaveManager:GetSavedTheme()
 	return self.SavedThemeName
 end
 
--- ============================================================
--- FILE HELPERS
--- ============================================================
+-- ============================================
+-- Config Existence
+-- ============================================
 
 function SaveManager:DoesConfigExist()
-	if not isfileFunction then
-		return false
-	end
-
-	local success, result = pcall(function()
-		return isfileFunction(self.File)
-	end)
-
-	return success and result == true
+	return safeIsFile(self.File)
 end
 
--- ============================================================
--- SAVE
--- ============================================================
+-- ============================================
+-- Build Save Data
+-- ============================================
 
-function SaveManager:Save()
-	if not writefileFunction then
-		return false
-	end
+function SaveManager:_buildSaveData()
+	local data = {
+		theme = self.CurrentThemeName,
+		objects = {},
+		window = {},
+	}
 
-	local objects = {}
+	-- ----------------------------------------
+	-- Feature states
+	-- ----------------------------------------
 
-	-- ================================
-	-- Save feature states
-	-- ================================
+	if type(self.Features) == "table" then
+		for index, feature in pairs(self.Features) do
+			if type(feature) == "table" then
+				local enabled = false
 
-	for index, feature in ipairs(self.Features or {}) do
-		if type(feature) == "table" then
-			local name = feature.NAME
+				if type(feature.isEnabled) == "function" then
+					local success, result = pcall(function()
+						return feature:isEnabled()
+					end)
 
-			if type(name) == "string" then
-				table.insert(objects, {
-					type = "Feature",
-					idx = index,
-					name = name,
-					enabled = safeFeatureState(feature),
-				})
+					if success then
+						enabled = result == true
+					end
+				end
+
+				local key
+
+				if type(index) == "number" then
+					key = tostring(index)
+				elseif type(index) == "string" then
+					key = index
+				end
+
+				if key then
+					data.objects[key] = enabled
+				end
+			elseif type(index) == "string" then
+				data.objects[index] = feature == true
 			end
 		end
 	end
 
-	-- ================================
-	-- Save window state
-	-- ================================
+	-- ----------------------------------------
+	-- Main window
+	-- ----------------------------------------
 
-	local windowData = {}
+	if self.Main then
+		local success, position, size = pcall(function()
+			return self.Main.Position, self.Main.Size
+		end)
 
-	if self.Main and self.Main.Parent then
-		local maximizedPosition = encodeUDim2(self.Main.Position)
-		local size = encodeUDim2(self.Main.Size)
+		if success then
+			data.window.position = {
+				scaleX = position.X.Scale,
+				offsetX = position.X.Offset,
+				scaleY = position.Y.Scale,
+				offsetY = position.Y.Offset,
+			}
 
-		if maximizedPosition then
-			windowData.maximizedPosition = maximizedPosition
-		end
-
-		if size then
-			windowData.size = size
+			data.window.size = {
+				scaleX = size.X.Scale,
+				offsetX = size.X.Offset,
+				scaleY = size.Y.Scale,
+				offsetY = size.Y.Offset,
+			}
 		end
 	end
 
-	if self.MiniButton and self.MiniButton.Parent then
-		local minimizedPosition = encodeUDim2(self.MiniButton.Position)
+	-- ----------------------------------------
+	-- Mini button
+	-- ----------------------------------------
 
-		if minimizedPosition then
-			windowData.minimizedPosition = minimizedPosition
+	if self.MiniButton then
+		local success, position = pcall(function()
+			return self.MiniButton.Position
+		end)
+
+		if success then
+			data.window.miniPosition = {
+				scaleX = position.X.Scale,
+				offsetX = position.X.Offset,
+				scaleY = position.Y.Scale,
+				offsetY = position.Y.Offset,
+			}
 		end
 	end
 
-	-- ================================
-	-- Save theme
-	-- ================================
+	return data
+end
 
-	local themeName = self.CurrentThemeName
+-- ============================================
+-- Save
+-- ============================================
 
-	local data = {
-		objects = objects,
-		window = windowData,
-		theme = themeName,
-	}
+function SaveManager:Save()
+	if not canUseFileSystem() then
+		return false
+	end
 
-	-- ================================
-	-- Encode + write
-	-- ================================
+	local data = self:_buildSaveData()
+	local encoded = encode(data)
 
-	local success, encoded = pcall(function()
-		return game:GetService("HttpService"):JSONEncode(data)
-	end)
+	if not encoded then
+		warn("[Save Manager] Failed to encode save data.")
+		return false
+	end
+
+	local success = safeWriteFile(self.File, encoded)
 
 	if not success then
-		warn("[Save Manager] Failed to encode configuration:", encoded)
+		warn("[Save Manager] Failed to write save file.")
 		return false
 	end
 
-	local writeSuccess, writeError = pcall(function()
-		writefileFunction(self.File, encoded)
-	end)
-
-	if not writeSuccess then
-		warn("[Save Manager] Failed to write configuration:", writeError)
-		return false
-	end
+	self.SavedThemeName = self.CurrentThemeName
 
 	return true
 end
 
--- ============================================================
--- LOAD
--- ============================================================
+-- ============================================
+-- Load
+-- ============================================
 
 function SaveManager:Load()
-	if not readfileFunction then
-		return false
+	if not safeIsFile(self.File) then
+		return false, nil
 	end
 
-	if not self:DoesConfigExist() then
-		return false
+	local contents = safeReadFile(self.File)
+
+	if not contents then
+		return false, nil
 	end
 
-	local readSuccess, contents = pcall(function()
-		return readfileFunction(self.File)
-	end)
+	local data = decode(contents)
 
-	if not readSuccess or type(contents) ~= "string" then
-		return false
-	end
-
-	local decodeSuccess, data = pcall(function()
-		return game:GetService("HttpService"):JSONDecode(contents)
-	end)
-
-	if not decodeSuccess or type(data) ~= "table" then
-		return false
-	end
-
-	-- ================================
-	-- Load feature states
-	-- ================================
-
-	if type(data.objects) == "table" then
-		for _, objectData in ipairs(data.objects) do
-			if type(objectData) == "table"
-				and objectData.type == "Feature"
-				and type(objectData.idx) == "number"
-			then
-				local feature = self.Features[objectData.idx]
-
-				if type(feature) == "table" then
-					local targetState = objectData.enabled == true
-
-					if targetState then
-						if type(feature.enable) == "function" then
-							pcall(feature.enable)
-						end
-					else
-						if type(feature.disable) == "function" then
-							pcall(feature.disable)
-						end
-					end
-				end
-			end
-		end
-	end
-
-	-- ================================
-	-- Load window state
-	-- ================================
-
-	if type(data.window) == "table" then
-		if self.Main and self.Main.Parent then
-			local position =
-				decodeUDim2(data.window.maximizedPosition)
-
-			local size =
-				decodeUDim2(data.window.size)
-
-			if position then
-				pcall(function()
-					self.Main.Position = position
-				end)
-			end
-
-			if size then
-				pcall(function()
-					self.Main.Size = size
-				end)
-			end
-		end
-
-		if self.MiniButton and self.MiniButton.Parent then
-			local position =
-				decodeUDim2(data.window.minimizedPosition)
-
-			if position then
-				pcall(function()
-					self.MiniButton.Position = position
-				end)
-			end
-		end
-	end
-
-	-- ================================
-	-- Load theme
-	-- ================================
-
-	self.SavedThemeName = nil
-
-	if type(data.theme) == "string"
-		and data.theme ~= ""
-	then
-		self.SavedThemeName = data.theme
-		self.CurrentThemeName = data.theme
+	if not data then
+		warn("[Save Manager] Failed to decode save file.")
+		return false, nil
 	end
 
 	self.Loaded = true
 
-	return true
+	-- ----------------------------------------
+	-- Saved theme
+	-- ----------------------------------------
+
+	if type(data.theme) == "string" then
+		self.SavedThemeName = data.theme
+	end
+
+	-- ----------------------------------------
+	-- Window
+	-- ----------------------------------------
+
+	if type(data.window) == "table" then
+		local window = data.window
+
+		if self.Main then
+			if type(window.position) == "table" then
+				local p = window.position
+
+				if
+					type(p.scaleX) == "number"
+					and type(p.offsetX) == "number"
+					and type(p.scaleY) == "number"
+					and type(p.offsetY) == "number"
+				then
+					pcall(function()
+						self.Main.Position = UDim2.new(
+							p.scaleX,
+							p.offsetX,
+							p.scaleY,
+							p.offsetY
+						)
+					end)
+				end
+			end
+
+			if type(window.size) == "table" then
+				local s = window.size
+
+				if
+					type(s.scaleX) == "number"
+					and type(s.offsetX) == "number"
+					and type(s.scaleY) == "number"
+					and type(s.offsetY) == "number"
+				then
+					pcall(function()
+						self.Main.Size = UDim2.new(
+							s.scaleX,
+							s.offsetX,
+							s.scaleY,
+							s.offsetY
+						)
+					end)
+				end
+			end
+		end
+
+		if self.MiniButton and type(window.miniPosition) == "table" then
+			local p = window.miniPosition
+
+			if
+				type(p.scaleX) == "number"
+				and type(p.offsetX) == "number"
+				and type(p.scaleY) == "number"
+				and type(p.offsetY) == "number"
+			then
+				pcall(function()
+					self.MiniButton.Position = UDim2.new(
+						p.scaleX,
+						p.offsetX,
+						p.scaleY,
+						p.offsetY
+					)
+				end)
+			end
+		end
+	end
+
+	return true, data
 end
 
--- ============================================================
--- AUTOLOAD
--- ============================================================
+-- ============================================
+-- Autoload
+-- ============================================
 
 function SaveManager:LoadAutoloadConfig()
 	return self:Load()
 end
 
--- ============================================================
--- ENABLE
--- ============================================================
+-- ============================================
+-- Lifecycle Compatibility
+-- ============================================
 
-function SaveManager.enable()
-	SaveManager.cleanup()
-
-	SaveManager._generation += 1
-
-	SaveManager._enabled = true
-	SaveManager.Loaded = false
-
+function SaveManager:enable()
 	return true
 end
 
--- ============================================================
--- DISABLE
--- ============================================================
-
-function SaveManager.disable()
-	SaveManager._enabled = false
-	SaveManager.cleanup()
+function SaveManager:disable()
+	return true
 end
 
--- ============================================================
--- STATE
--- ============================================================
-
-function SaveManager.isEnabled()
-	return SaveManager._enabled == true
+function SaveManager:isEnabled()
+	return true
 end
 
--- ============================================================
--- CLEANUP
--- ============================================================
-
-function SaveManager.cleanup()
-	SaveManager._enabled = false
-
-	SaveManager._generation += 1
-
-	-- Cancel tracked tasks.
-	for index = #SaveManager._tasks, 1, -1 do
-		local thread = SaveManager._tasks[index]
-
-		if thread then
-			pcall(function()
-				task.cancel(thread)
-			end)
-		end
-
-		SaveManager._tasks[index] = nil
-	end
-
-	-- Disconnect tracked connections.
-	for index = #SaveManager._connections, 1, -1 do
-		local connection = SaveManager._connections[index]
-
+function SaveManager:cleanup()
+	for _, connection in pairs(self._connections) do
 		if connection then
 			pcall(function()
 				connection:Disconnect()
 			end)
 		end
-
-		SaveManager._connections[index] = nil
 	end
 
-	-- Destroy tracked instances.
-	for index = #SaveManager._instances, 1, -1 do
-		local instance = SaveManager._instances[index]
+	table.clear(self._connections)
 
+	for _, instance in pairs(self._instances) do
 		if instance then
 			pcall(function()
 				instance:Destroy()
 			end)
 		end
-
-		SaveManager._instances[index] = nil
 	end
 
-	-- Reset runtime references.
-	SaveManager.Features = {}
-	SaveManager.Main = nil
-	SaveManager.MiniButton = nil
+	table.clear(self._instances)
 
-	SaveManager.CurrentThemeName = nil
-	SaveManager.SavedThemeName = nil
-	SaveManager.Loaded = false
+	table.clear(self._tasks)
+
+	self.Features = {}
+
+	self.Main = nil
+	self.MiniButton = nil
+
+	self.CurrentThemeName = nil
+	self.SavedThemeName = nil
+	self.Loaded = false
 end
 
 return SaveManager
