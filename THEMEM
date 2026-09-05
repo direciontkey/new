@@ -1,136 +1,72 @@
--- ============================================================
+-- ============================================
 -- THEME MANAGER
--- ============================================================
+-- ============================================
+
+local HttpService = game:GetService("HttpService")
 
 local ThemeManager = {
 	NAME = "Theme Manager",
 
-	-- ================================
-	-- Services
-	-- ================================
-	_httpService = game:GetService("HttpService"),
-
-	-- ================================
-	-- Runtime state
-	-- ================================
-	_enabled = false,
-	_generation = 0,
-
-	-- ================================
-	-- Theme state
-	-- ================================
-	_themeConfig = nil,
-	_currentTheme = nil,
-	_currentThemeName = nil,
-
-	-- ================================
-	-- Theme object registry
-	-- ================================
-	_objects = {},
-}
-
--- ============================================================
--- CONSTANTS
--- ============================================================
-
-ThemeManager._config = {
 	THEME_CONFIG_URL = "https://yaso.su/raw/r5ZueqRx",
+
+	_themes = {},
+	_currentThemeName = nil,
+	_currentTheme = nil,
+	_initialized = false,
 }
 
-ThemeManager._requiredThemeValues = {
-	Window = {
-		"Background",
-		"Outline",
-	},
+-- ============================================
+-- Helpers
+-- ============================================
 
-	Header = {
-		"Background",
-		"Title",
-	},
-
-	Content = {
-		"Background",
-	},
-
-	FeatureBar = {
-		"Background",
-		"Outline",
-		"Name",
-	},
-
-	CircleToggle = {
-		"EnabledOuter",
-		"DisabledOuter",
-		"EnabledInner",
-		"DisabledInner",
-	},
-}
-
--- ============================================================
--- TRACKING HELPERS
--- ============================================================
-
-function ThemeManager._trackConnection(connection)
-	if connection then
-		table.insert(ThemeManager._connections, connection)
-	end
-
-	return connection
+local function isColor3(value)
+	return typeof(value) == "Color3"
 end
 
-function ThemeManager._trackInstance(instance)
-	if instance then
-		table.insert(ThemeManager._instances, instance)
-	end
-
-	return instance
-end
-
-function ThemeManager._trackTask(thread)
-	if thread then
-		table.insert(ThemeManager._tasks, thread)
-	end
-
-	return thread
-end
-
-function ThemeManager._safeDisconnect(connection)
-	pcall(function()
-		connection:Disconnect()
-	end)
-end
-
-function ThemeManager._safeDestroy(instance)
-	pcall(function()
-		instance:Destroy()
-	end)
-end
-
-function ThemeManager._safeCancel(thread)
-	pcall(function()
-		task.cancel(thread)
-	end)
-end
-
--- ============================================================
--- FEATURE HELPERS
--- ============================================================
-
-function ThemeManager._validateTheme(theme)
+local function validateTheme(theme)
 	if type(theme) ~= "table" then
-		return false, "Theme is not a table"
+		return false
 	end
 
-	for sectionName, values in pairs(ThemeManager._requiredThemeValues) do
+	local required = {
+		Window = {
+			"Background",
+			"Outline",
+		},
+
+		Header = {
+			"Background",
+			"Title",
+		},
+
+		Content = {
+			"Background",
+		},
+
+		FeatureBar = {
+			"Background",
+			"Outline",
+			"Name",
+		},
+
+		CircleToggle = {
+			"EnabledOuter",
+			"DisabledOuter",
+			"EnabledInner",
+			"DisabledInner",
+		},
+	}
+
+	for sectionName, fields in pairs(required) do
 		local section = theme[sectionName]
 
 		if type(section) ~= "table" then
-			return false, "Missing section: " .. sectionName
+			return false
 		end
 
-		for _, valueName in ipairs(values) do
-			if section[valueName] == nil then
-				return false, "Missing " .. sectionName .. "." .. valueName
+		for _, fieldName in ipairs(fields) do
+			if not isColor3(section[fieldName]) then
+				return false
 			end
 		end
 	end
@@ -138,414 +74,215 @@ function ThemeManager._validateTheme(theme)
 	return true
 end
 
-function ThemeManager._loadRemoteThemes()
-	local url = ThemeManager._config.THEME_CONFIG_URL
-
-	if type(url) ~= "string" or url == "" then
-		warn("[Theme Manager] Theme URL is empty")
+local function cloneTheme(theme)
+	if type(theme) ~= "table" then
 		return nil
 	end
 
+	local result = {}
+
+	for key, value in pairs(theme) do
+		if type(value) == "table" then
+			result[key] = {}
+
+			for subKey, subValue in pairs(value) do
+				result[key][subKey] = subValue
+			end
+		else
+			result[key] = value
+		end
+	end
+
+	return result
+end
+
+-- ============================================
+-- Load Theme Configuration
+-- ============================================
+
+local function loadThemes()
 	local success, result = pcall(function()
-		local source = game:HttpGet(url)
-
-		if type(source) ~= "string" or source == "" then
-			error("Remote theme response is empty")
-		end
-
-		local loader = loadstring(source)
-
-		if not loader then
-			error("loadstring returned nil")
-		end
-
-		return loader()
+		return game:HttpGet(ThemeManager.THEME_CONFIG_URL)
 	end)
 
 	if not success then
-		warn("[Theme Manager] Failed to load remote themes:", result)
-		return nil
+		warn("[Theme Manager] Failed to download theme configuration:", result)
+		return false
 	end
 
-	if type(result) ~= "table" then
-		warn("[Theme Manager] Theme config must return a table")
-		return nil
+	local source = result
+
+	local loadSuccess, loader = pcall(loadstring, source)
+
+	if not loadSuccess or type(loader) ~= "function" then
+		warn("[Theme Manager] Failed to compile theme configuration.")
+		return false
+	end
+
+	local executeSuccess, themes = pcall(loader)
+
+	if not executeSuccess then
+		warn("[Theme Manager] Failed to execute theme configuration:", themes)
+		return false
+	end
+
+	if type(themes) ~= "table" then
+		warn("[Theme Manager] Theme configuration did not return a table.")
+		return false
 	end
 
 	local validThemes = {}
-	local invalidCount = 0
 
-	for themeName, themeData in pairs(result) do
-		if type(themeName) == "string" then
-			local valid, errorMessage = ThemeManager._validateTheme(themeData)
-
-			if valid then
-				validThemes[themeName] = themeData
-			else
-				invalidCount += 1
-
-				warn(
-					"[Theme Manager] Invalid theme '" .. themeName .. "':",
-					errorMessage
-				)
-			end
+	for themeName, themeData in pairs(themes) do
+		if type(themeName) == "string" and validateTheme(themeData) then
+			validThemes[themeName] = cloneTheme(themeData)
 		end
 	end
 
 	if next(validThemes) == nil then
-		warn("[Theme Manager] Remote theme file contains no valid themes")
-		return nil
+		warn("[Theme Manager] No valid themes were found.")
+		return false
 	end
 
-	if invalidCount > 0 then
-		warn(
-			"[Theme Manager] Skipped",
-			invalidCount,
-			"invalid theme(s)"
-		)
-	end
+	ThemeManager._themes = validThemes
+	ThemeManager._initialized = true
 
-	return validThemes
+	return true
 end
 
-function ThemeManager._getTheme(themeName)
-	if type(ThemeManager._themeConfig) ~= "table" then
-		return nil
+-- ============================================
+-- Initialization
+-- ============================================
+
+local function ensureInitialized()
+	if ThemeManager._initialized then
+		return true
 	end
 
-	local theme = ThemeManager._themeConfig[themeName]
-
-	if not theme then
-		return nil
-	end
-
-	local valid = ThemeManager._validateTheme(theme)
-
-	if not valid then
-		return nil
-	end
-
-	return theme
+	return loadThemes()
 end
 
-function ThemeManager._getInitialTheme()
-	local defaultTheme = ThemeManager._getTheme("Default")
+-- ============================================
+-- Public API
+-- ============================================
 
-	if defaultTheme then
-		return "Default", defaultTheme
+function ThemeManager:getTheme(themeName)
+	if not ensureInitialized() then
+		return nil
+	end
+
+	if themeName == nil then
+		return self._currentTheme
+	end
+
+	return self._themes[themeName]
+end
+
+function ThemeManager:getThemeNames()
+	if not ensureInitialized() then
+		return {}
 	end
 
 	local names = {}
 
-	for themeName in pairs(ThemeManager._themeConfig) do
-		if type(themeName) == "string" then
-			table.insert(names, themeName)
-		end
+	for themeName in pairs(self._themes) do
+		table.insert(names, themeName)
 	end
 
-	table.sort(names)
+	table.sort(names, function(a, b)
+		return a:lower() < b:lower()
+	end)
 
-	for _, themeName in ipairs(names) do
-		local theme = ThemeManager._getTheme(themeName)
+	return names
+end
 
-		if theme then
-			return themeName, theme
-		end
+function ThemeManager:getInitialTheme()
+	if not ensureInitialized() then
+		return nil, nil
+	end
+
+	-- Prefer Default when available.
+	if self._themes.Default then
+		self._currentThemeName = "Default"
+		self._currentTheme = self._themes.Default
+
+		return "Default", self._themes.Default
+	end
+
+	-- Otherwise use the first theme alphabetically.
+	local names = self:getThemeNames()
+	local firstName = names[1]
+
+	if firstName then
+		self._currentThemeName = firstName
+		self._currentTheme = self._themes[firstName]
+
+		return firstName, self._themes[firstName]
 	end
 
 	return nil, nil
 end
 
-function ThemeManager._getThemeNames()
-	local names = {}
-
-	if type(ThemeManager._themeConfig) ~= "table" then
-		return names
-	end
-
-	for themeName in pairs(ThemeManager._themeConfig) do
-		if type(themeName) == "string" then
-			table.insert(names, themeName)
-		end
-	end
-
-	table.sort(names)
-
-	return names
-end
-
--- ============================================================
--- THEME REGISTRY
--- ============================================================
-
-function ThemeManager._register(instance, properties)
-	if not instance or type(properties) ~= "table" then
-		return false
-	end
-
-	table.insert(ThemeManager._objects, {
-		Instance = instance,
-		Properties = properties,
-	})
-
-	if ThemeManager._currentTheme then
-		ThemeManager._applyObject(
-			instance,
-			properties,
-			ThemeManager._currentTheme
-		)
-	end
-
-	return true
-end
-
-function ThemeManager._unregister(instance)
-	for index = #ThemeManager._objects, 1, -1 do
-		local data = ThemeManager._objects[index]
-
-		if data.Instance == instance then
-			table.remove(ThemeManager._objects, index)
-		end
-	end
-end
-
-function ThemeManager._clearRegistry()
-	table.clear(ThemeManager._objects)
-end
-
--- ============================================================
--- THEME VALUE RESOLUTION
--- ============================================================
-
-function ThemeManager._getThemeValue(theme, path)
-	if type(theme) ~= "table" then
+function ThemeManager:applyTheme(themeName)
+	if not ensureInitialized() then
 		return nil
 	end
 
-	if type(path) ~= "string" then
+	if type(themeName) ~= "string" then
 		return nil
 	end
 
-	local current = theme
-
-	for key in string.gmatch(path, "[^%.]+") do
-		if type(current) ~= "table" then
-			return nil
-		end
-
-		current = current[key]
-	end
-
-	return current
-end
-
-function ThemeManager._applyObject(instance, properties, theme)
-	if not instance or not instance.Parent then
-		return
-	end
-
-	if type(properties) ~= "table" then
-		return
-	end
-
-	for property, themePath in pairs(properties) do
-		local value = ThemeManager._getThemeValue(theme, themePath)
-
-		if value ~= nil then
-			pcall(function()
-				instance[property] = value
-			end)
-		end
-	end
-end
-
-function ThemeManager._applyRegisteredObjects()
-	local objects = ThemeManager._objects
-	local theme = ThemeManager._currentTheme
+	local theme = self._themes[themeName]
 
 	if not theme then
-		return
+		return nil
 	end
 
-	for index = #objects, 1, -1 do
-		local data = objects[index]
+	self._currentThemeName = themeName
+	self._currentTheme = theme
 
-		if not data
-			or not data.Instance
-			or not data.Instance.Parent
-		then
-			table.remove(objects, index)
-		else
-			ThemeManager._applyObject(
-				data.Instance,
-				data.Properties,
-				theme
-			)
-		end
-	end
+	return theme
 end
 
--- ============================================================
--- THEME APPLICATION
--- ============================================================
+function ThemeManager:getCurrentThemeName()
+	return self._currentThemeName
+end
 
-function ThemeManager._applyTheme(themeName)
-	if not ThemeManager._enabled then
-		return false
+-- ============================================
+-- Compatibility / Lifecycle
+-- ============================================
+
+function ThemeManager:enable()
+	ensureInitialized()
+
+	if not self._currentTheme then
+		self:getInitialTheme()
 	end
 
-	local newTheme = ThemeManager._getTheme(themeName)
+	return self._currentTheme ~= nil
+end
 
-	if not newTheme then
-		warn("[Theme Manager] Failed to apply theme:", themeName)
-		return false
-	end
-
-	ThemeManager._currentTheme = newTheme
-	ThemeManager._currentThemeName = themeName
-
-	ThemeManager._applyRegisteredObjects()
-
+function ThemeManager:disable()
+	-- ThemeManager is core infrastructure.
+	-- Do not destroy the loaded theme configuration.
 	return true
 end
 
--- ============================================================
--- THEME STATE ACCESS
--- ============================================================
-
-function ThemeManager._getCurrentTheme()
-	return ThemeManager._currentTheme
+function ThemeManager:isEnabled()
+	return self._initialized
 end
 
-function ThemeManager._getCurrentThemeName()
-	return ThemeManager._currentThemeName
+function ThemeManager:cleanup()
+	self._themes = {}
+	self._currentThemeName = nil
+	self._currentTheme = nil
+	self._initialized = false
 end
 
-function ThemeManager._getThemeConfig()
-	return ThemeManager._themeConfig
-end
+-- ============================================
+-- Initialize Immediately
+-- ============================================
 
--- ============================================================
--- ENABLE
--- ============================================================
-
-function ThemeManager.enable()
-	ThemeManager.cleanup()
-
-	ThemeManager._generation += 1
-
-	local generation = ThemeManager._generation
-
-	ThemeManager._enabled = true
-
-	local themes = ThemeManager._loadRemoteThemes()
-
-	if not themes then
-		ThemeManager._enabled = false
-		return false
-	end
-
-	if generation ~= ThemeManager._generation
-		or not ThemeManager._enabled
-	then
-		return false
-	end
-
-	ThemeManager._themeConfig = themes
-
-	local themeName, theme = ThemeManager._getInitialTheme()
-
-	if not theme then
-		warn("[Theme Manager] No usable theme found")
-
-		ThemeManager._enabled = false
-		ThemeManager._themeConfig = nil
-
-		return false
-	end
-
-	ThemeManager._currentThemeName = themeName
-	ThemeManager._currentTheme = theme
-
-	ThemeManager._applyRegisteredObjects()
-
-	return true
-end
-
--- ============================================================
--- DISABLE
--- ============================================================
-
-function ThemeManager.disable()
-	ThemeManager._enabled = false
-	ThemeManager.cleanup()
-end
-
--- ============================================================
--- ENABLED STATE
--- ============================================================
-
-function ThemeManager.isEnabled()
-	return ThemeManager._enabled == true
-end
-
--- ============================================================
--- CLEANUP
--- ============================================================
-
-function ThemeManager.cleanup()
-	ThemeManager._enabled = false
-
-	ThemeManager._generation += 1
-
-	-- Cancel tracked tasks.
-	for index = #ThemeManager._tasks, 1, -1 do
-		local taskThread = ThemeManager._tasks[index]
-
-		if taskThread then
-			ThemeManager._safeCancel(taskThread)
-		end
-
-		ThemeManager._tasks[index] = nil
-	end
-
-	-- Disconnect every tracked connection.
-	for index = #ThemeManager._connections, 1, -1 do
-		local connection = ThemeManager._connections[index]
-
-		if connection then
-			ThemeManager._safeDisconnect(connection)
-		end
-
-		ThemeManager._connections[index] = nil
-	end
-
-	-- Destroy every feature-created instance.
-	for index = #ThemeManager._instances, 1, -1 do
-		local instance = ThemeManager._instances[index]
-
-		if instance then
-			ThemeManager._safeDestroy(instance)
-		end
-
-		ThemeManager._instances[index] = nil
-	end
-
-	-- Clear theme registry.
-	ThemeManager._clearRegistry()
-
-	-- Clear theme state.
-	ThemeManager._themeConfig = nil
-	ThemeManager._currentTheme = nil
-	ThemeManager._currentThemeName = nil
-end
-
--- ============================================================
--- INITIAL RESOURCE TABLES
--- ============================================================
-
-ThemeManager._connections = {}
-ThemeManager._instances = {}
-ThemeManager._tasks = {}
+ensureInitialized()
 
 return ThemeManager
