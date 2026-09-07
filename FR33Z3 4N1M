@@ -1,0 +1,222 @@
+-- ============================================
+-- FREEZE ROTATION
+-- ============================================
+
+local Feature = {
+	NAME = "Freeze Rotation",
+	_players = game:GetService("Players"),
+	_runService = game:GetService("RunService"),
+	_enabled = false,
+	_generation = 0,
+	_connections = {},
+	_instances = {},
+	_tasks = {},
+	_player = nil,
+	_frozen = false,
+	_lockedRotation = nil,
+}
+
+-- ============================================
+-- TRACKING HELPERS
+-- ============================================
+
+function Feature._safeDisconnect(connection)
+	if connection then
+		pcall(function()
+			connection:Disconnect()
+		end)
+	end
+end
+
+function Feature._safeDestroy(instance)
+	if instance then
+		pcall(function()
+			instance:Destroy()
+		end)
+	end
+end
+
+function Feature._safeCancel(thread)
+	if thread then
+		pcall(function()
+			task.cancel(thread)
+		end)
+	end
+end
+
+function Feature._trackConnection(connection)
+	if connection then
+		table.insert(Feature._connections, connection)
+	end
+
+	return connection
+end
+
+function Feature._trackInstance(instance)
+	if instance then
+		table.insert(Feature._instances, instance)
+	end
+
+	return instance
+end
+
+function Feature._trackTask(thread)
+	if thread then
+		table.insert(Feature._tasks, thread)
+	end
+
+	return thread
+end
+
+-- ============================================
+-- CHARACTER HELPERS
+-- ============================================
+
+function Feature._getRoot(character)
+	if not character then
+		return nil
+	end
+
+	return character:FindFirstChild("HumanoidRootPart")
+		or character.PrimaryPart
+end
+
+function Feature._getCharacter()
+	if not Feature._player then
+		return nil
+	end
+
+	return Feature._player.Character
+end
+
+-- ============================================
+-- FREEZE
+-- ============================================
+
+function Feature._freeze()
+	if not Feature._enabled or Feature._frozen then
+		return
+	end
+
+	local character = Feature._getCharacter()
+	local root = Feature._getRoot(character)
+
+	if not root then
+		return
+	end
+
+	Feature._frozen = true
+	Feature._lockedRotation = root.CFrame.Rotation
+
+	local generation = Feature._generation
+
+	Feature._trackConnection(
+		Feature._runService.Heartbeat:Connect(function()
+			if generation ~= Feature._generation
+				or not Feature._enabled
+				or not Feature._frozen then
+				return
+			end
+
+			character = Feature._getCharacter()
+			root = Feature._getRoot(character)
+
+			if not root then
+				return
+			end
+
+			local position = root.Position
+
+			root.CFrame =
+				CFrame.new(position) * Feature._lockedRotation
+		end)
+	)
+end
+
+-- ============================================
+-- THAW
+-- ============================================
+
+function Feature._thaw()
+	Feature._frozen = false
+	Feature._lockedRotation = nil
+
+	for index, connection in pairs(Feature._connections) do
+		Feature._safeDisconnect(connection)
+		Feature._connections[index] = nil
+	end
+
+	Feature._connections = {}
+end
+
+-- ============================================
+-- ENABLE
+-- ============================================
+
+function Feature.enable()
+	Feature.cleanup()
+
+	Feature._generation += 1
+	Feature._enabled = true
+	Feature._player = Feature._players.LocalPlayer
+
+	if not Feature._player then
+		Feature._enabled = false
+		Feature.cleanup()
+		return
+	end
+
+	Feature._freeze()
+end
+
+-- ============================================
+-- DISABLE
+-- ============================================
+
+function Feature.disable()
+	Feature._enabled = false
+	Feature.cleanup()
+end
+
+-- ============================================
+-- IS ENABLED
+-- ============================================
+
+function Feature.isEnabled()
+	return Feature._enabled
+end
+
+-- ============================================
+-- CLEANUP
+-- ============================================
+
+function Feature.cleanup()
+	Feature._enabled = false
+	Feature._generation += 1
+	Feature._frozen = false
+	Feature._lockedRotation = nil
+
+	for _, connection in ipairs(Feature._connections) do
+		Feature._safeDisconnect(connection)
+	end
+
+	table.clear(Feature._connections)
+
+	for _, thread in ipairs(Feature._tasks) do
+		Feature._safeCancel(thread)
+	end
+
+	table.clear(Feature._tasks)
+
+	for _, instance in ipairs(Feature._instances) do
+		Feature._safeDestroy(instance)
+	end
+
+	table.clear(Feature._instances)
+
+	Feature._player = nil
+	Feature._frozen = false
+	Feature._lockedRotation = nil
+end
+
+return Feature
