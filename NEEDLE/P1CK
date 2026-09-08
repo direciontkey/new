@@ -1,0 +1,425 @@
+-- ============================================
+-- AUTO PICK
+-- ============================================
+
+local Feature = {
+	NAME = "Auto Pick",
+	_players = game:GetService("Players"),
+	_replicatedStorage = game:GetService("ReplicatedStorage"),
+	_workspace = game:GetService("Workspace"),
+	_chatService = game:GetService("Chat"),
+	_enabled = false,
+	_autoPick = false,
+	_isRunning = false,
+	_generation = 0,
+	_connections = {},
+	_instances = {},
+	_tasks = {},
+	_player = nil,
+	_character = nil,
+	_root = nil,
+	_pickHay = nil,
+	_lastPickTime = 0,
+}
+
+-- SETTINGS
+
+Feature._config = {
+	PICK_COOLDOWN = 0.2,
+	MAX_DISTANCE = 30,
+	GRAB_RADIUS = 15,
+	BAG_WAIT = 0.5,
+	LOOP_WAIT = 0.1,
+	DEFAULT_CAPACITY = 25,
+}
+
+-- TRACKING
+
+function Feature._safeDisconnect(connection)
+	if connection then
+		pcall(function()
+			connection:Disconnect()
+		end)
+	end
+end
+
+function Feature._safeCancel(taskHandle)
+	if taskHandle then
+		pcall(function()
+			task.cancel(taskHandle)
+		end)
+	end
+end
+
+function Feature._safeDestroy(instance)
+	if instance then
+		pcall(function()
+			instance:Destroy()
+		end)
+	end
+end
+
+function Feature._trackConnection(connection)
+	if connection then
+		table.insert(Feature._connections, connection)
+	end
+	return connection
+end
+
+function Feature._trackInstance(instance)
+	if instance then
+		table.insert(Feature._instances, instance)
+	end
+	return instance
+end
+
+function Feature._trackTask(taskHandle)
+	if taskHandle then
+		table.insert(Feature._tasks, taskHandle)
+	end
+	return taskHandle
+end
+
+-- FEATURE HELPERS
+
+function Feature._isBagFull()
+	local player = Feature._player
+	if not player then
+		return true
+	end
+
+	local held = player:GetAttribute("HayHeld") or 0
+	local capacity = player:GetAttribute("HayCapacity") or Feature._config.DEFAULT_CAPACITY
+
+	return held >= capacity
+end
+
+function Feature._getHayPieces()
+	local pieces = {}
+	local hayFolder = Feature._workspace:FindFirstChild("HaystackClient")
+
+	if not hayFolder or not Feature._root or not Feature._root.Parent then
+		return pieces
+	end
+
+	local rootPosition = Feature._root.Position
+
+	for _, part in ipairs(hayFolder:GetChildren()) do
+		if part:IsA("BasePart") and part:IsDescendantOf(Feature._workspace) then
+			local hayId = part:GetAttribute("HayId")
+
+			if hayId then
+				local distance = (part.Position - rootPosition).Magnitude
+
+				if distance <= Feature._config.MAX_DISTANCE then
+					table.insert(pieces, {
+						part = part,
+						id = hayId,
+						distance = distance,
+					})
+				end
+			end
+		end
+	end
+
+	table.sort(pieces, function(a, b)
+		return a.distance < b.distance
+	end)
+
+	return pieces
+end
+
+function Feature._updateCharacter(character)
+	if not Feature._enabled then
+		return
+	end
+
+	Feature._character = character
+	Feature._root = character and character:FindFirstChild("HumanoidRootPart")
+end
+
+function Feature._chat(message, color)
+	local player = Feature._player
+	local character = player and player.Character
+	local head = character and character:FindFirstChild("Head")
+
+	if not head then
+		return
+	end
+
+	pcall(function()
+		Feature._chatService:Chat(head, message, color)
+	end)
+end
+
+function Feature._autoPickLoop(generation)
+	if Feature._isRunning then
+		return
+	end
+
+	Feature._isRunning = true
+
+	while generation == Feature._generation and Feature._enabled and Feature._autoPick do
+		if not Feature._root or not Feature._root.Parent then
+			local character = Feature._player and Feature._player.Character
+
+			if character then
+				Feature._updateCharacter(character)
+			end
+
+			task.wait(0.1)
+			continue
+		end
+
+		if Feature._isBagFull() then
+			task.wait(Feature._config.BAG_WAIT)
+			continue
+		end
+
+		local pieces = Feature._getHayPieces()
+
+		if #pieces == 0 then
+			task.wait(Feature._config.BAG_WAIT)
+			continue
+		end
+
+		local nearest = pieces[1]
+
+		local now = os.clock()
+		local elapsed = now - Feature._lastPickTime
+
+		if elapsed < Feature._config.PICK_COOLDOWN then
+			task.wait(Feature._config.PICK_COOLDOWN - elapsed)
+
+			if generation ~= Feature._generation or not Feature._enabled or not Feature._autoPick then
+				break
+			end
+		end
+
+		local grabCount = Feature._player:GetAttribute("HayGrabCount") or 1
+		local extraIds = {}
+
+		for i = 2, math.min(grabCount, #pieces) do
+			if pieces[i].distance <= Feature._config.GRAB_RADIUS then
+				table.insert(extraIds, pieces[i].id)
+			end
+		end
+
+		if generation ~= Feature._generation or not Feature._enabled or not Feature._autoPick then
+			break
+		end
+
+		if #extraIds > 0 then
+			Feature._pickHay:FireServer(nearest.id, extraIds)
+		else
+			Feature._pickHay:FireServer(nearest.id)
+		end
+
+		Feature._lastPickTime = os.clock()
+		task.wait(Feature._config.LOOP_WAIT)
+	end
+
+	Feature._isRunning = false
+end
+
+function Feature._startAutoPick()
+	if Feature._autoPick or Feature._isRunning then
+		return
+	end
+
+	Feature._autoPick = true
+
+	local generation = Feature._generation
+
+	local thread = task.spawn(function()
+		Feature._autoPickLoop(generation)
+	end)
+
+	Feature._trackTask(thread)
+end
+
+function Feature._stopAutoPick()
+	Feature._autoPick = false
+end
+
+function Feature._handleChat(message)
+	if not Feature._enabled then
+		return
+	end
+
+	local msg = message:lower()
+
+	if msg == "!pick on" then
+		if not Feature._autoPick then
+			Feature._startAutoPick()
+			Feature._chat("Auto Pick ENABLED", Enum.ChatColor.Green)
+		else
+			Feature._chat("Auto Pick already ENABLED", Enum.ChatColor.Yellow)
+		end
+
+		return
+	end
+
+	if msg == "!pick off" then
+		if Feature._autoPick then
+			Feature._stopAutoPick()
+			Feature._chat("Auto Pick DISABLED", Enum.ChatColor.Red)
+		else
+			Feature._chat("Auto Pick already DISABLED", Enum.ChatColor.Yellow)
+		end
+
+		return
+	end
+
+	if msg == "!pick status" then
+		local status = Feature._autoPick and "ENABLED" or "DISABLED"
+		local held = Feature._player:GetAttribute("HayHeld") or 0
+		local capacity = Feature._player:GetAttribute("HayCapacity") or Feature._config.DEFAULT_CAPACITY
+
+		Feature._chat(
+			string.format("Auto Pick: %s | Bag: %d/%d", status, held, capacity),
+			Enum.ChatColor.Blue
+		)
+
+		return
+	end
+end
+
+-- LIFECYCLE
+
+function Feature._setupCharacterMonitoring(generation)
+	local player = Feature._player
+
+	if not player then
+		return
+	end
+
+	Feature._updateCharacter(player.Character)
+
+	Feature._trackConnection(player.CharacterAdded:Connect(function(character)
+		if generation ~= Feature._generation or not Feature._enabled then
+			return
+		end
+
+		Feature._character = character
+		Feature._root = character:WaitForChild("HumanoidRootPart", 5)
+	end))
+end
+
+function Feature._setupChatMonitoring(generation)
+	local player = Feature._player
+
+	if not player then
+		return
+	end
+
+	Feature._trackConnection(player.Chatted:Connect(function(message)
+		if generation ~= Feature._generation or not Feature._enabled then
+			return
+		end
+
+		Feature._handleChat(message)
+	end))
+end
+
+-- ============================================
+-- ENABLE
+-- ============================================
+
+function Feature.enable()
+	Feature.cleanup()
+
+	Feature._generation += 1
+	Feature._enabled = true
+	Feature._autoPick = false
+	Feature._isRunning = false
+	Feature._lastPickTime = 0
+
+	Feature._player = Feature._players.LocalPlayer
+
+	if not Feature._player then
+		Feature._enabled = false
+		Feature.cleanup()
+		return
+	end
+
+	local generation = Feature._generation
+
+	local success, remoteStorage = pcall(function()
+		return Feature._replicatedStorage:WaitForChild("NeedleHaystack")
+	end)
+
+	if not success or not remoteStorage then
+		Feature._enabled = false
+		Feature.cleanup()
+		return
+	end
+
+	local pickSuccess, pickHay = pcall(function()
+		return remoteStorage:WaitForChild("PickHay")
+	end)
+
+	if not pickSuccess or not pickHay then
+		Feature._enabled = false
+		Feature.cleanup()
+		return
+	end
+
+	Feature._pickHay = pickHay
+
+	Feature._setupCharacterMonitoring(generation)
+	Feature._setupChatMonitoring(generation)
+end
+
+-- ============================================
+-- DISABLE
+-- ============================================
+
+function Feature.disable()
+	Feature._enabled = false
+	Feature._autoPick = false
+	Feature.cleanup()
+end
+
+-- ============================================
+-- IS ENABLED
+-- ============================================
+
+function Feature.isEnabled()
+	return Feature._enabled
+end
+
+-- ============================================
+-- CLEANUP
+-- ============================================
+
+function Feature.cleanup()
+	Feature._enabled = false
+	Feature._autoPick = false
+	Feature._generation += 1
+
+	for _, connection in ipairs(Feature._connections) do
+		Feature._safeDisconnect(connection)
+	end
+
+	for _, taskHandle in ipairs(Feature._tasks) do
+		Feature._safeCancel(taskHandle)
+	end
+
+	for _, instance in ipairs(Feature._instances) do
+		Feature._safeDestroy(instance)
+	end
+
+	table.clear(Feature._connections)
+	table.clear(Feature._instances)
+	table.clear(Feature._tasks)
+
+	Feature._isRunning = false
+	Feature._player = nil
+	Feature._character = nil
+	Feature._root = nil
+	Feature._pickHay = nil
+	Feature._lastPickTime = 0
+end
+
+return Feature
