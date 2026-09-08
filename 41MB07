@@ -34,8 +34,6 @@ local Feature = {
 	_aimbotRenderConnection = nil,
 }
 
-getgenv().__AimbotFeature = Feature
-
 -- ============================================
 -- CONFIGURATION
 -- ============================================
@@ -414,7 +412,7 @@ function Feature._setupPlayerTracking()
 
 		Feature._trackConnection(player.CharacterRemoving:Connect(function(character)
 			Feature._unregisterCharacter(character)
-		end)
+		end))
 	end))
 
 	Feature._trackConnection(Feature._players.PlayerRemoving:Connect(function(player)
@@ -1659,5 +1657,19 @@ function Feature.cleanup()
 	Feature._aimbotRenderConnection = nil
 	Feature._player = nil
 end
+
+-- ============================================
+-- GLOBAL EXPOSURE
+-- ============================================
+
+local globalEnv = _G
+
+pcall(function()
+	if type(getgenv) == "function" then
+		globalEnv = getgenv()
+	end
+end)
+
+globalEnv.__AimbotFeature = Feature
 
 return Feature
