@@ -73,7 +73,23 @@ Feature._guiName = "AimbotGUI"
 -- ============================================
 
 function Feature.setExternalPause(paused)
-	Feature._externalPause = paused == true
+	paused = paused == true
+
+	if Feature._externalPause == paused then
+		return
+	end
+
+	Feature._externalPause = paused
+
+	if paused then
+		if Feature._aimbotEnabled then
+			Feature._setAimbotEnabled(false)
+		end
+	else
+		if Feature._enabled and not Feature._aimbotEnabled then
+			Feature._setAimbotEnabled(true)
+		end
+	end
 end
 
 -- ============================================
@@ -133,16 +149,20 @@ function Feature._isDrawingAvailable()
 	if Feature._drawingLibrary ~= nil then
 		return Feature._hasDrawing
 	end
+
 	local success, result = pcall(function()
 		return Drawing
 	end)
+
 	if success and type(result) == "table" then
 		Feature._drawingLibrary = result
 		Feature._hasDrawing = true
 		return true
 	end
+
 	Feature._drawingLibrary = false
 	Feature._hasDrawing = false
+
 	return false
 end
 
@@ -154,43 +174,53 @@ function Feature._createFOVLine(thickness, transparency, color)
 	if not Feature._hasDrawing then
 		return nil
 	end
+
 	local success, line = pcall(function()
 		local drawing = Feature._drawingLibrary.new("Line")
+
 		drawing.Visible = false
 		drawing.Thickness = thickness or 2
 		drawing.Transparency = transparency or 1
 		drawing.Color = color or Feature._fovBoundaryColor
+
 		return drawing
 	end)
+
 	if success and line then
 		Feature._modifiedDrawing[#Feature._modifiedDrawing + 1] = line
 		return line
 	end
+
 	return nil
 end
 
 function Feature._createFOVDrawing()
 	Feature._fovLines = {}
 	Feature._fovExtraLines = {}
+
 	if not Feature._isDrawingAvailable() then
 		return
 	end
+
 	for _ = 1, Feature._config.EXACT_BOUNDARY_SEGMENTS do
 		local line = Feature._createFOVLine(
 			Feature._config.FOV_DRAWING_THICKNESS,
 			Feature._config.FOV_DRAWING_TRANSPARENCY,
 			Feature._fovBoundaryColor
 		)
+
 		if line then
 			Feature._fovLines[#Feature._fovLines + 1] = line
 		end
 	end
+
 	for _ = 1, 5 do
 		local line = Feature._createFOVLine(
 			Feature._config.FOV_CENTER_THICKNESS,
 			Feature._config.FOV_CENTER_TRANSPARENCY,
 			Feature._fovCenterColor
 		)
+
 		if line then
 			Feature._fovExtraLines[#Feature._fovExtraLines + 1] = line
 		end
@@ -201,6 +231,7 @@ function Feature._hideLine(line)
 	if not line then
 		return
 	end
+
 	pcall(function()
 		line.Visible = false
 	end)
@@ -210,26 +241,39 @@ function Feature._hidePool(pool)
 	if not pool then
 		return
 	end
+
 	for index = 1, #pool do
 		Feature._hideLine(pool[index])
 	end
 end
 
-function Feature._setLine(line, from, to, visible, thickness, transparency, color)
+function Feature._setLine(
+	line,
+	from,
+	to,
+	visible,
+	thickness,
+	transparency,
+	color
+)
 	if not line then
 		return
 	end
+
 	pcall(function()
 		if from and to then
 			line.From = from
 			line.To = to
 			line.Visible = visible
+
 			if thickness then
 				line.Thickness = thickness
 			end
+
 			if transparency then
 				line.Transparency = transparency
 			end
+
 			if color then
 				line.Color = color
 			end
@@ -247,12 +291,15 @@ function Feature._worldToScreen(camera, worldPosition)
 	if not camera then
 		return nil
 	end
+
 	local success, position, visible = pcall(function()
 		return camera:WorldToViewportPoint(worldPosition)
 	end)
+
 	if not success or not visible then
 		return nil
 	end
+
 	return Vector2.new(position.X, position.Y)
 end
 
@@ -264,19 +311,39 @@ function Feature._getFOVWorldDistance(camera)
 	local screenHeight = camera.ViewportSize.Y
 	local visualLength = screenHeight * Feature._config.FOV_VISUAL_LENGTH
 	local cameraFOV = math.rad(camera.FieldOfView)
-	local distance = (visualLength / 2) / math.tan(cameraFOV / 2)
-	return math.clamp(distance, 10, Feature._config.FOV_VISUAL_DISTANCE)
+
+	local distance =
+		(visualLength / 2)
+		/ math.tan(cameraFOV / 2)
+
+	return math.clamp(
+		distance,
+		10,
+		Feature._config.FOV_VISUAL_DISTANCE
+	)
 end
 
-function Feature._getExactAngularBoundaryPoint(camera, rotation, distance)
+function Feature._getExactAngularBoundaryPoint(
+	camera,
+	rotation,
+	distance
+)
 	local cf = camera.CFrame
 	local look = cf.LookVector
 	local right = cf.RightVector
 	local up = cf.UpVector
+
 	local fovRadians = math.rad(Feature._fov)
 	local rotationRadians = math.rad(rotation)
-	local radial = right * math.cos(rotationRadians) + up * math.sin(rotationRadians)
-	local direction = look * math.cos(fovRadians) + radial * math.sin(fovRadians)
+
+	local radial =
+		right * math.cos(rotationRadians)
+		+ up * math.sin(rotationRadians)
+
+	local direction =
+		look * math.cos(fovRadians)
+		+ radial * math.sin(fovRadians)
+
 	return cf.Position + direction * distance
 end
 
@@ -284,29 +351,44 @@ function Feature._updateFOVVisualization()
 	if not Feature._hasDrawing then
 		return
 	end
+
 	local camera = Feature._workspace.CurrentCamera
+
 	if not camera then
 		Feature._hidePool(Feature._fovLines)
 		Feature._hidePool(Feature._fovExtraLines)
 		return
 	end
+
 	if not Feature._showFOV then
 		Feature._hidePool(Feature._fovLines)
 		Feature._hidePool(Feature._fovExtraLines)
 		return
 	end
+
 	local distance = Feature._getFOVWorldDistance(camera)
 	local points = {}
+
 	for i = 0, Feature._config.EXACT_BOUNDARY_SEGMENTS do
-		local rotation = (i / Feature._config.EXACT_BOUNDARY_SEGMENTS) * 360
-		points[i + 1] = Feature._worldToScreen(
-			camera,
-			Feature._getExactAngularBoundaryPoint(camera, rotation, distance)
-		)
+		local rotation =
+			(i / Feature._config.EXACT_BOUNDARY_SEGMENTS)
+			* 360
+
+		points[i + 1] =
+			Feature._worldToScreen(
+				camera,
+				Feature._getExactAngularBoundaryPoint(
+					camera,
+					rotation,
+					distance
+				)
+			)
 	end
+
 	for i = 1, Feature._config.EXACT_BOUNDARY_SEGMENTS do
 		local p1 = points[i]
 		local p2 = points[i + 1]
+
 		if p1 and p2 then
 			Feature._setLine(
 				Feature._fovLines[i],
@@ -321,9 +403,23 @@ function Feature._updateFOVVisualization()
 			Feature._hideLine(Feature._fovLines[i])
 		end
 	end
-	local center = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
-	local centerWorld = camera.CFrame.Position + camera.CFrame.LookVector * distance
-	local centerScreen = Feature._worldToScreen(camera, centerWorld)
+
+	local center =
+		Vector2.new(
+			camera.ViewportSize.X / 2,
+			camera.ViewportSize.Y / 2
+		)
+
+	local centerWorld =
+		camera.CFrame.Position
+		+ camera.CFrame.LookVector * distance
+
+	local centerScreen =
+		Feature._worldToScreen(
+			camera,
+			centerWorld
+		)
+
 	Feature._setLine(
 		Feature._fovExtraLines[1],
 		center,
@@ -333,6 +429,7 @@ function Feature._updateFOVVisualization()
 		Feature._config.FOV_CENTER_TRANSPARENCY,
 		Feature._fovCenterColor
 	)
+
 	for i = 2, #Feature._fovExtraLines do
 		Feature._hideLine(Feature._fovExtraLines[i])
 	end
@@ -344,16 +441,30 @@ end
 
 function Feature._getAngleToTarget(targetPosition)
 	local camera = Feature._workspace.CurrentCamera
+
 	if not camera then
 		return math.huge
 	end
-	local offset = targetPosition - camera.CFrame.Position
+
+	local offset =
+		targetPosition
+		- camera.CFrame.Position
+
 	local magnitude = offset.Magnitude
+
 	if magnitude <= 0 then
 		return 0
 	end
+
 	local direction = offset / magnitude
-	local dot = math.clamp(direction:Dot(camera.CFrame.LookVector), -1, 1)
+
+	local dot =
+		math.clamp(
+			direction:Dot(camera.CFrame.LookVector),
+			-1,
+			1
+		)
+
 	return math.deg(math.acos(dot))
 end
 
@@ -361,7 +472,9 @@ function Feature._isWithinFOV(targetPosition)
 	if not Feature._showFOV then
 		return true
 	end
-	return Feature._getAngleToTarget(targetPosition) <= Feature._fov
+
+	return Feature._getAngleToTarget(targetPosition)
+		<= Feature._fov
 end
 
 -- ============================================
@@ -381,43 +494,59 @@ function Feature._unregisterCharacter(character)
 end
 
 function Feature._setupPlayerTracking()
-	for _, player in ipairs(Feature._players:GetPlayers()) do
+	for _, player in ipairs(
+		Feature._players:GetPlayers()
+	) do
 		Feature._registerCharacter(player.Character)
 
-		Feature._trackConnection(player.CharacterAdded:Connect(function(character)
-			if not Feature._enabled then
-				return
-			end
-			Feature._registerCharacter(character)
-		end))
+		Feature._trackConnection(
+			player.CharacterAdded:Connect(function(character)
+				if not Feature._enabled then
+					return
+				end
 
-		Feature._trackConnection(player.CharacterRemoving:Connect(function(character)
-			Feature._unregisterCharacter(character)
-		end))
+				Feature._registerCharacter(character)
+			end)
+		)
+
+		Feature._trackConnection(
+			player.CharacterRemoving:Connect(function(character)
+				Feature._unregisterCharacter(character)
+			end)
+		)
 	end
 
-	Feature._trackConnection(Feature._players.PlayerAdded:Connect(function(player)
-		if not Feature._enabled then
-			return
-		end
-
-		Feature._registerCharacter(player.Character)
-
-		Feature._trackConnection(player.CharacterAdded:Connect(function(character)
+	Feature._trackConnection(
+		Feature._players.PlayerAdded:Connect(function(player)
 			if not Feature._enabled then
 				return
 			end
-			Feature._registerCharacter(character)
-		end))
 
-		Feature._trackConnection(player.CharacterRemoving:Connect(function(character)
-			Feature._unregisterCharacter(character)
-		end))
-	end))
+			Feature._registerCharacter(player.Character)
 
-	Feature._trackConnection(Feature._players.PlayerRemoving:Connect(function(player)
-		Feature._unregisterCharacter(player.Character)
-	end))
+			Feature._trackConnection(
+				player.CharacterAdded:Connect(function(character)
+					if not Feature._enabled then
+						return
+					end
+
+					Feature._registerCharacter(character)
+				end)
+			)
+
+			Feature._trackConnection(
+				player.CharacterRemoving:Connect(function(character)
+					Feature._unregisterCharacter(character)
+				end)
+			)
+		end)
+	)
+
+	Feature._trackConnection(
+		Feature._players.PlayerRemoving:Connect(function(player)
+			Feature._unregisterCharacter(player.Character)
+		end)
+	)
 end
 
 function Feature._isPlayerCharacter(model)
@@ -436,13 +565,18 @@ function Feature._isMonsterModel(model)
 	if not model or not model:IsA("Model") then
 		return false
 	end
+
 	if Feature._isPlayerCharacter(model) then
 		return false
 	end
-	local monstersFolder = Feature._getMonstersFolder()
+
+	local monstersFolder =
+		Feature._getMonstersFolder()
+
 	if not monstersFolder then
 		return false
 	end
+
 	return model:IsDescendantOf(monstersFolder)
 end
 
@@ -454,19 +588,32 @@ function Feature._getAllMonsters()
 	local now = os.clock()
 
 	if not Feature._monsterCacheDirty
-		and now - Feature._monsterCacheTime < Feature._config.CACHE_TTL then
+		and now - Feature._monsterCacheTime
+			< Feature._config.CACHE_TTL then
+
 		return Feature._monsterCache
 	end
 
 	local monsters = {}
-	local monstersFolder = Feature._getMonstersFolder()
+	local monstersFolder =
+		Feature._getMonstersFolder()
 
 	if monstersFolder then
-		for _, object in ipairs(monstersFolder:GetDescendants()) do
-			if object:IsA("Model") and Feature._isMonsterModel(object) then
-				local humanoid = object:FindFirstChildWhichIsA("Humanoid", true)
+		for _, object in ipairs(
+			monstersFolder:GetDescendants()
+		) do
+			if object:IsA("Model")
+				and Feature._isMonsterModel(object) then
 
-				if humanoid and humanoid.Health > 0 then
+				local humanoid =
+					object:FindFirstChildWhichIsA(
+						"Humanoid",
+						true
+					)
+
+				if humanoid
+					and humanoid.Health > 0 then
+
 					monsters[#monsters + 1] = {
 						model = object,
 						humanoid = humanoid,
@@ -489,16 +636,23 @@ end
 
 function Feature._isBoss(modelName)
 	for i = 1, #Feature._bossPatterns do
-		if string.find(modelName, Feature._bossPatterns[i]) then
+		if string.find(
+			modelName,
+			Feature._bossPatterns[i]
+		) then
 			return true
 		end
 	end
+
 	return false
 end
 
 function Feature._getPriority(modelName, distance)
-	local boss = Feature._isBoss(modelName)
-	local close = distance <= Feature._config.CLOSE_RANGE
+	local boss =
+		Feature._isBoss(modelName)
+
+	local close =
+		distance <= Feature._config.CLOSE_RANGE
 
 	if boss and close then
 		return 1
@@ -521,7 +675,8 @@ end
 
 function Feature._getBestTarget()
 	local now = os.clock()
-	local player = Feature._players.LocalPlayer
+	local player =
+		Feature._players.LocalPlayer
 
 	if not player then
 		return nil
@@ -533,59 +688,103 @@ function Feature._getBestTarget()
 		return nil
 	end
 
-	local rootPart = character:FindFirstChild("HumanoidRootPart")
+	local rootPart =
+		character:FindFirstChild(
+			"HumanoidRootPart"
+		)
 
 	if not rootPart then
 		return nil
 	end
 
-	local cachedPart = Feature._targetCache.part
+	local cachedPart =
+		Feature._targetCache.part
 
 	if cachedPart
 		and cachedPart.Parent
 		and now - Feature._targetCache.time < 0.15 then
 
-		local model = cachedPart:FindFirstAncestorOfClass("Model")
+		local model =
+			cachedPart:FindFirstAncestorOfClass(
+				"Model"
+			)
 
 		if model then
-			local humanoid = model:FindFirstChildWhichIsA("Humanoid", true)
+			local humanoid =
+				model:FindFirstChildWhichIsA(
+					"Humanoid",
+					true
+				)
 
 			if humanoid
 				and humanoid.Health > 0
-				and Feature._isWithinFOV(cachedPart.Position) then
+				and Feature._isWithinFOV(
+					cachedPart.Position
+				) then
 
 				return cachedPart
 			end
 		end
 	end
 
-	local bestParts = {nil, nil, nil, nil}
-	local bestDistances = {math.huge, math.huge, math.huge, math.huge}
-	local rootPosition = rootPart.Position
-	local monsters = Feature._getAllMonsters()
+	local bestParts =
+		{nil, nil, nil, nil}
+
+	local bestDistances =
+		{
+			math.huge,
+			math.huge,
+			math.huge,
+			math.huge,
+		}
+
+	local rootPosition =
+		rootPart.Position
+
+	local monsters =
+		Feature._getAllMonsters()
 
 	for i = 1, #monsters do
 		local entry = monsters[i]
 		local model = entry.model
 		local humanoid = entry.humanoid
 
-		if model.Parent and humanoid.Health > 0 then
+		if model.Parent
+			and humanoid.Health > 0 then
+
 			local targetPart =
 				model:FindFirstChild("Head")
-				or model:FindFirstChild("HumanoidRootPart")
+				or model:FindFirstChild(
+					"HumanoidRootPart"
+				)
 
 			if targetPart then
-				local offset = rootPosition - targetPart.Position
-				local distance = offset.Magnitude
+				local offset =
+					rootPosition
+					- targetPart.Position
+
+				local distance =
+					offset.Magnitude
 
 				if distance <= Feature._config.MAX_RANGE
-					and Feature._isWithinFOV(targetPart.Position) then
+					and Feature._isWithinFOV(
+						targetPart.Position
+					) then
 
-					local priority = Feature._getPriority(model.Name, distance)
+					local priority =
+						Feature._getPriority(
+							model.Name,
+							distance
+						)
 
-					if distance < bestDistances[priority] then
-						bestDistances[priority] = distance
-						bestParts[priority] = targetPart
+					if distance
+						< bestDistances[priority] then
+
+						bestDistances[priority] =
+							distance
+
+						bestParts[priority] =
+							targetPart
 					end
 				end
 			end
@@ -594,8 +793,12 @@ function Feature._getBestTarget()
 
 	for priority = 1, 4 do
 		if bestParts[priority] then
-			Feature._targetCache.part = bestParts[priority]
-			Feature._targetCache.time = now
+			Feature._targetCache.part =
+				bestParts[priority]
+
+			Feature._targetCache.time =
+				now
+
 			return bestParts[priority]
 		end
 	end
@@ -618,21 +821,26 @@ function Feature._invalidateGunCache()
 end
 
 function Feature._refreshGunCache(force)
-	local player = Feature._players.LocalPlayer
+	local player =
+		Feature._players.LocalPlayer
 
 	if not player then
 		Feature._invalidateGunCache()
 		return false
 	end
 
-	local character = player.Character
+	local character =
+		player.Character
 
 	if not character then
 		Feature._invalidateGunCache()
 		return false
 	end
 
-	local tool = character:FindFirstChildOfClass("Tool")
+	local tool =
+		character:FindFirstChildOfClass(
+			"Tool"
+		)
 
 	if not tool then
 		Feature._invalidateGunCache()
@@ -641,7 +849,9 @@ function Feature._refreshGunCache(force)
 
 	local gunClient =
 		tool:FindFirstChild("GunClient")
-		or tool:FindFirstChild("WeaponClient")
+		or tool:FindFirstChild(
+			"WeaponClient"
+		)
 
 	if not gunClient then
 		Feature._invalidateGunCache()
@@ -653,7 +863,8 @@ function Feature._refreshGunCache(force)
 	if not force
 		and Feature._gunClient == gunClient
 		and Feature._gunEnv
-		and now - Feature._gunCacheTime < Feature._config.GUN_CACHE_TTL then
+		and now - Feature._gunCacheTime
+			< Feature._config.GUN_CACHE_TTL then
 
 		return true
 	end
@@ -674,7 +885,8 @@ function Feature._refreshGunCache(force)
 	Feature._gunEnv = env
 
 	for i = 1, #Feature._fireFunctions do
-		local fn = env[Feature._fireFunctions[i]]
+		local fn =
+			env[Feature._fireFunctions[i]]
 
 		if type(fn) == "function" then
 			Feature._gunFireFunction = fn
@@ -694,7 +906,6 @@ function Feature._triggerGunFire()
 		return false
 	end
 
-	-- Refresh immediately if the cached gun is no longer usable.
 	if not Feature._refreshGunCache(false) then
 		Feature._invalidateGunCache()
 
@@ -704,14 +915,14 @@ function Feature._triggerGunFire()
 	end
 
 	local env = Feature._gunEnv
-	local fireFunction = Feature._gunFireFunction
+	local fireFunction =
+		Feature._gunFireFunction
 
-	-- Try the discovered fire function.
 	if fireFunction then
-		local success = pcall(fireFunction)
+		local success =
+			pcall(fireFunction)
 
 		if success then
-			-- Keep the firing state active for the current shot.
 			if env and env.v_u_81 then
 				pcall(function()
 					env.v_u_81.Down = true
@@ -723,15 +934,16 @@ function Feature._triggerGunFire()
 			return true
 		end
 
-		-- Cached function failed. Rebuild everything immediately.
 		Feature._invalidateGunCache()
 
 		if Feature._refreshGunCache(true) then
 			env = Feature._gunEnv
-			fireFunction = Feature._gunFireFunction
+			fireFunction =
+				Feature._gunFireFunction
 
 			if fireFunction then
-				local retrySuccess = pcall(fireFunction)
+				local retrySuccess =
+					pcall(fireFunction)
 
 				if retrySuccess then
 					if env and env.v_u_81 then
@@ -751,7 +963,6 @@ function Feature._triggerGunFire()
 		return false
 	end
 
-	-- Fallback to the weapon's firing state.
 	if not env then
 		Feature._invalidateGunCache()
 
@@ -762,14 +973,16 @@ function Feature._triggerGunFire()
 		env = Feature._gunEnv
 	end
 
-	local firingState = env and env.v_u_81
+	local firingState =
+		env and env.v_u_81
 
 	if not firingState then
 		Feature._invalidateGunCache()
 
 		if Feature._refreshGunCache(true) then
 			env = Feature._gunEnv
-			firingState = env and env.v_u_81
+			firingState =
+				env and env.v_u_81
 		end
 
 		if not firingState then
@@ -777,37 +990,48 @@ function Feature._triggerGunFire()
 		end
 	end
 
-	local success = pcall(function()
-		firingState.Down = true
-		firingState.Enabled = true
-		firingState.Reloading = false
+	local success =
+		pcall(function()
+			firingState.Down = true
+			firingState.Enabled = true
+			firingState.Reloading = false
 
-		local ammo = env.v_u_146
+			local ammo = env.v_u_146
 
-		if ammo and ammo.Mag and ammo.Mag <= 0 then
-			ammo.Mag = 1
-		end
-	end)
+			if ammo
+				and ammo.Mag
+				and ammo.Mag <= 0 then
+
+				ammo.Mag = 1
+			end
+		end)
 
 	if not success then
 		Feature._invalidateGunCache()
 		return false
 	end
 
-	local generation = Feature._generation
+	local generation =
+		Feature._generation
+
 	local firingEnv = env
 
-	local thread = task.defer(function()
-		if generation ~= Feature._generation or not Feature._enabled then
-			return
-		end
+	local thread =
+		task.defer(function()
+			if generation ~= Feature._generation
+				or not Feature._enabled then
 
-		if firingEnv and firingEnv.v_u_81 then
-			pcall(function()
-				firingEnv.v_u_81.Down = false
-			end)
-		end
-	end)
+				return
+			end
+
+			if firingEnv
+				and firingEnv.v_u_81 then
+
+				pcall(function()
+					firingEnv.v_u_81.Down = false
+				end)
+			end
+		end)
 
 	Feature._trackTask(thread)
 
@@ -819,8 +1043,11 @@ end
 -- ============================================
 
 function Feature._setFPP(enabled)
-	local player = Feature._players.LocalPlayer
-	local camera = Feature._workspace.CurrentCamera
+	local player =
+		Feature._players.LocalPlayer
+
+	local camera =
+		Feature._workspace.CurrentCamera
 
 	if not player or not camera then
 		return
@@ -830,10 +1057,13 @@ function Feature._setFPP(enabled)
 		Feature._fppEnabled = true
 
 		pcall(function()
-			player.CameraMode = Enum.CameraMode.LockFirstPerson
+			player.CameraMode =
+				Enum.CameraMode.LockFirstPerson
+
 			player.CameraMinZoomDistance = 0.5
 			player.CameraMaxZoomDistance = 0.5
-			camera.CameraType = Enum.CameraType.Custom
+			camera.CameraType =
+				Enum.CameraType.Custom
 		end)
 
 		return
@@ -845,57 +1075,69 @@ function Feature._setFPP(enabled)
 
 	Feature._fppEnabled = false
 
-	local generation = Feature._generation
+	local generation =
+		Feature._generation
 
-	local thread = task.spawn(function()
-		if generation ~= Feature._generation then
-			return
-		end
+	local thread =
+		task.spawn(function()
+			if generation ~= Feature._generation then
+				return
+			end
 
-		if not player or not player.Parent then
-			return
-		end
+			if not player or not player.Parent then
+				return
+			end
 
-		local currentCamera = Feature._workspace.CurrentCamera
+			local currentCamera =
+				Feature._workspace.CurrentCamera
 
-		if not currentCamera then
-			return
-		end
+			if not currentCamera then
+				return
+			end
 
-		pcall(function()
-			player.CameraMode = Enum.CameraMode.Classic
-			currentCamera.CameraType = Enum.CameraType.Custom
-			player.CameraMinZoomDistance = 13.5
-			player.CameraMaxZoomDistance = 13.5
+			pcall(function()
+				player.CameraMode =
+					Enum.CameraMode.Classic
+
+				currentCamera.CameraType =
+					Enum.CameraType.Custom
+
+				player.CameraMinZoomDistance = 13.5
+				player.CameraMaxZoomDistance = 13.5
+			end)
+
+			Feature._runService.RenderStepped:Wait()
+
+			if generation ~= Feature._generation
+				or not Feature._enabled then
+
+				return
+			end
+
+			if not player or not player.Parent then
+				return
+			end
+
+			pcall(function()
+				player.CameraMinZoomDistance = 13.5
+				player.CameraMaxZoomDistance = 13.5
+			end)
+
+			Feature._runService.RenderStepped:Wait()
+
+			if generation ~= Feature._generation
+				or not Feature._enabled then
+
+				return
+			end
+
+			pcall(function()
+				player.CameraMaxZoomDistance = 99999
+				player.CameraMinZoomDistance = 0.5
+				player.CameraMode =
+					Enum.CameraMode.Classic
+			end)
 		end)
-
-		Feature._runService.RenderStepped:Wait()
-
-		if generation ~= Feature._generation or not Feature._enabled then
-			return
-		end
-
-		if not player or not player.Parent then
-			return
-		end
-
-		pcall(function()
-			player.CameraMinZoomDistance = 13.5
-			player.CameraMaxZoomDistance = 13.5
-		end)
-
-		Feature._runService.RenderStepped:Wait()
-
-		if generation ~= Feature._generation or not Feature._enabled then
-			return
-		end
-
-		pcall(function()
-			player.CameraMaxZoomDistance = 99999
-			player.CameraMinZoomDistance = 0.5
-			player.CameraMode = Enum.CameraMode.Classic
-		end)
-	end)
 
 	Feature._trackTask(thread)
 end
@@ -907,24 +1149,33 @@ end
 function Feature._equipWeapon()
 	local remote
 
-	local success = pcall(function()
-		remote = Feature._replicatedStorage
-			:WaitForChild("Remotes")
-			:WaitForChild("BuyOrEquipWeapon")
-	end)
+	local success =
+		pcall(function()
+			remote =
+				Feature._replicatedStorage
+					:WaitForChild("Remotes")
+					:WaitForChild(
+						"BuyOrEquipWeapon"
+					)
+		end)
 
 	if not success or not remote then
 		return false
 	end
 
-	for attempt = 1, Feature._config.EQUIP_ATTEMPTS do
+	for attempt = 1,
+		Feature._config.EQUIP_ATTEMPTS do
+
 		if not Feature._enabled then
 			return false
 		end
 
-		local fired = pcall(function()
-			remote:FireServer(Feature._config.WEAPON_NAME)
-		end)
+		local fired =
+			pcall(function()
+				remote:FireServer(
+					Feature._config.WEAPON_NAME
+				)
+			end)
 
 		if fired then
 			Feature._invalidateGunCache()
@@ -945,78 +1196,121 @@ function Feature._startAimbot()
 	Feature._stopAimbotLoop()
 	Feature._lastFireTime = 0
 
-	local generation = Feature._generation
+	local generation =
+		Feature._generation
 
-	local connection = Feature._runService.RenderStepped:Connect(function()
-		if generation ~= Feature._generation or not Feature._enabled then
-			return
-		end
+	local connection =
+		Feature._runService.RenderStepped:Connect(
+			function()
+				if generation ~= Feature._generation
+					or not Feature._enabled then
 
-		Feature._updateFOVVisualization()
+					return
+				end
 
-		if Feature._externalPause then
-			return
-		end
+				Feature._updateFOVVisualization()
 
-		if not Feature._aimbotEnabled then
-			return
-		end
+				if Feature._externalPause then
+					return
+				end
 
-		local target = Feature._getBestTarget()
-		local player = Feature._players.LocalPlayer
-		local playerCharacter = player and player.Character
+				if not Feature._aimbotEnabled then
+					return
+				end
 
-		if not target or not target.Parent or not playerCharacter then
-			return
-		end
+				local target =
+					Feature._getBestTarget()
 
-		local camera = Feature._workspace.CurrentCamera
+				local player =
+					Feature._players.LocalPlayer
 
-		if not camera then
-			return
-		end
+				local playerCharacter =
+					player and player.Character
 
-		local currentPosition = camera.CFrame.Position
-		local targetPosition = target.Position
-		local offset = targetPosition - currentPosition
-		local magnitude = offset.Magnitude
+				if not target
+					or not target.Parent
+					or not playerCharacter then
 
-		if magnitude <= 0 then
-			return
-		end
+					return
+				end
 
-		local desiredLook = offset / magnitude
+				local camera =
+					Feature._workspace.CurrentCamera
 
-		pcall(function()
-			camera.CFrame = CFrame.new(
-				currentPosition,
-				currentPosition + desiredLook
-			)
-		end)
+				if not camera then
+					return
+				end
 
-		local currentTime = os.clock()
+				local currentPosition =
+					camera.CFrame.Position
 
-		if currentTime - Feature._lastFireTime >= Feature._config.FIRE_RATE then
-			if Feature._triggerGunFire() then
-				Feature._lastFireTime = currentTime
+				local targetPosition =
+					target.Position
+
+				local offset =
+					targetPosition
+					- currentPosition
+
+				local magnitude =
+					offset.Magnitude
+
+				if magnitude <= 0 then
+					return
+				end
+
+				local desiredLook =
+					offset / magnitude
+
+				pcall(function()
+					camera.CFrame =
+						CFrame.new(
+							currentPosition,
+							currentPosition
+								+ desiredLook
+						)
+				end)
+
+				local currentTime =
+					os.clock()
+
+				if currentTime
+						- Feature._lastFireTime
+					>= Feature._config.FIRE_RATE then
+
+					if Feature._triggerGunFire() then
+						Feature._lastFireTime =
+							currentTime
+					end
+				end
 			end
-		end
-	end)
+		)
 
-	Feature._aimbotRenderConnection = connection
+	Feature._aimbotRenderConnection =
+		connection
+
 	Feature._trackConnection(connection)
 end
 
 function Feature._stopAimbotLoop()
-	local connection = Feature._aimbotRenderConnection
+	local connection =
+		Feature._aimbotRenderConnection
+
 	Feature._aimbotRenderConnection = nil
 
 	if connection then
 		Feature._safeDisconnect(connection)
 
-		for index = #Feature._connections, 1, -1 do
-			if Feature._connections[index] == connection then
-				table.remove(Feature._connections, index)
+		for index =
+			#Feature._connections, 1, -1 do
+
+			if Feature._connections[index]
+				== connection then
+
+				table.remove(
+					Feature._connections,
+					index
+				)
+
 				break
 			end
 		end
@@ -1058,7 +1352,9 @@ function Feature._setFOVVisible(enabled)
 
 	if not Feature._showFOV then
 		Feature._hidePool(Feature._fovLines)
-		Feature._hidePool(Feature._fovExtraLines)
+		Feature._hidePool(
+			Feature._fovExtraLines
+		)
 	end
 
 	Feature._updateGUI()
@@ -1071,11 +1367,12 @@ function Feature._setFOV(value)
 		return
 	end
 
-	Feature._fov = math.clamp(
-		value,
-		Feature._config.FOV_MIN,
-		Feature._config.FOV_MAX
-	)
+	Feature._fov =
+		math.clamp(
+			value,
+			Feature._config.FOV_MIN,
+			Feature._config.FOV_MAX
+		)
 
 	Feature._updateGUI()
 end
@@ -1085,12 +1382,15 @@ end
 -- ============================================
 
 function Feature._updateGUI()
-	local elements = Feature._guiElements
+	local elements =
+		Feature._guiElements
 
 	if elements.mainToggle then
 		pcall(function()
 			elements.mainToggle.Text =
-				Feature._aimbotEnabled and "ON" or "OFF"
+				Feature._aimbotEnabled
+				and "ON"
+				or "OFF"
 
 			elements.mainToggle.BackgroundColor3 =
 				Feature._aimbotEnabled
@@ -1112,20 +1412,48 @@ function Feature._updateGUI()
 
 	if elements.fovAngleLabel then
 		pcall(function()
-			elements.fovAngleLabel.Text = Feature._fov .. "°"
+			elements.fovAngleLabel.Text =
+				Feature._fov .. "°"
 		end)
 	end
 
-	if elements.sliderFill and elements.sliderKnob then
-		local percent =
-			(Feature._fov - Feature._config.FOV_MIN)
-			/ (Feature._config.FOV_MAX - Feature._config.FOV_MIN)
+	if elements.sliderFill
+		and elements.sliderKnob then
 
-		percent = math.clamp(percent, 0, 1)
+		local percent =
+			(
+				Feature._fov
+				- Feature._config.FOV_MIN
+			)
+			/
+			(
+				Feature._config.FOV_MAX
+				- Feature._config.FOV_MIN
+			)
+
+		percent =
+			math.clamp(
+				percent,
+				0,
+				1
+			)
 
 		pcall(function()
-			elements.sliderFill.Size = UDim2.new(percent, 0, 1, 0)
-			elements.sliderKnob.Position = UDim2.new(percent, 0, 0.5, 0)
+			elements.sliderFill.Size =
+				UDim2.new(
+					percent,
+					0,
+					1,
+					0
+				)
+
+			elements.sliderKnob.Position =
+				UDim2.new(
+					percent,
+					0,
+					0.5,
+					0
+				)
 		end)
 	end
 end
@@ -1135,43 +1463,57 @@ end
 -- ============================================
 
 function Feature._updateSliderFromX(mouseX)
-	local elements = Feature._guiElements
-	local track = elements.sliderTrack
+	local elements =
+		Feature._guiElements
+
+	local track =
+		elements.sliderTrack
 
 	if not track then
 		return
 	end
 
-	local trackPosition = track.AbsolutePosition.X
-	local trackSize = track.AbsoluteSize.X
+	local trackPosition =
+		track.AbsolutePosition.X
+
+	local trackSize =
+		track.AbsoluteSize.X
 
 	if trackSize <= 0 then
 		return
 	end
 
-	local percent = math.clamp(
-		(mouseX - trackPosition) / trackSize,
-		0,
-		1
-	)
+	local percent =
+		math.clamp(
+			(mouseX - trackPosition)
+				/ trackSize,
+			0,
+			1
+		)
 
 	local angle =
 		Feature._config.FOV_MIN
-		+ (Feature._config.FOV_MAX - Feature._config.FOV_MIN) * percent
+		+ (
+			Feature._config.FOV_MAX
+			- Feature._config.FOV_MIN
+		) * percent
 
-	angle = math.floor(angle + 0.5)
+	angle =
+		math.floor(angle + 0.5)
 
 	Feature._setFOV(angle)
 end
 
 function Feature._toggleFOVSlider()
-	local slider = Feature._guiElements.fovSlider
+	local slider =
+		Feature._guiElements.fovSlider
 
 	if not slider then
 		return
 	end
 
-	slider.Visible = not slider.Visible
+	slider.Visible =
+		not slider.Visible
 
 	if slider.Visible then
 		Feature._updateGUI()
@@ -1222,7 +1564,8 @@ end
 function Feature._createGUI()
 	Feature._destroyGUI()
 
-	local player = Feature._players.LocalPlayer
+	local player =
+		Feature._players.LocalPlayer
 
 	if not player then
 		return
@@ -1230,243 +1573,678 @@ function Feature._createGUI()
 
 	local playerGui
 
-	local success = pcall(function()
-		playerGui = player:WaitForChild("PlayerGui", 5)
-	end)
+	local success =
+		pcall(function()
+			playerGui =
+				player:WaitForChild(
+					"PlayerGui",
+					5
+				)
+		end)
 
 	if not success or not playerGui then
 		return
 	end
 
-	local elements = Feature._guiElements
+	local elements =
+		Feature._guiElements
 
-	local container = Feature._trackInstance(Instance.new("ScreenGui"))
-	container.Name = Feature._guiName
-	container.ResetOnSpawn = false
-	container.IgnoreGuiInset = true
-	container.Parent = playerGui
-	elements.container = container
+	local container =
+		Feature._trackInstance(
+			Instance.new("ScreenGui")
+		)
 
-	local mainFrame = Feature._trackInstance(Instance.new("Frame"))
-	mainFrame.Name = "MainFrame"
-	mainFrame.Parent = container
-	mainFrame.Position = UDim2.new(0.5, 261, 0.5, 56)
-	mainFrame.Size = UDim2.new(0, 46, 0, 46)
-	mainFrame.AnchorPoint = Vector2.new(0, 0)
-	mainFrame.BackgroundColor3 = Color3.fromRGB(50, 50, 70)
-	mainFrame.BackgroundTransparency = 0.5
-	mainFrame.BorderSizePixel = 0
+	container.Name =
+		Feature._guiName
 
-	local corner = Feature._trackInstance(Instance.new("UICorner"))
-	corner.CornerRadius = UDim.new(0, 8)
-	corner.Parent = mainFrame
+	container.ResetOnSpawn =
+		false
+
+	container.IgnoreGuiInset =
+		true
+
+	container.Parent =
+		playerGui
+
+	elements.container =
+		container
+
+	local mainFrame =
+		Feature._trackInstance(
+			Instance.new("Frame")
+		)
+
+	mainFrame.Name =
+		"MainFrame"
+
+	mainFrame.Parent =
+		container
+
+	mainFrame.Position =
+		UDim2.new(
+			0.5,
+			261,
+			0.5,
+			56
+		)
+
+	mainFrame.Size =
+		UDim2.new(
+			0,
+			46,
+			0,
+			46
+		)
+
+	mainFrame.AnchorPoint =
+		Vector2.new(0, 0)
+
+	mainFrame.BackgroundColor3 =
+		Color3.fromRGB(
+			50,
+			50,
+			70
+		)
+
+	mainFrame.BackgroundTransparency =
+		0.5
+
+	mainFrame.BorderSizePixel =
+		0
+
+	local corner =
+		Feature._trackInstance(
+			Instance.new("UICorner")
+		)
+
+	corner.CornerRadius =
+		UDim.new(0, 8)
+
+	corner.Parent =
+		mainFrame
 
 	-- ========================================
 	-- MAIN TOGGLE
 	-- ========================================
 
-	local mainToggle = Feature._trackInstance(Instance.new("TextButton"))
-	mainToggle.Name = "ToggleButton"
-	mainToggle.Size = UDim2.new(0, 34, 0, 34)
-	mainToggle.Position = UDim2.new(0, 6, 0, 6)
+	local mainToggle =
+		Feature._trackInstance(
+			Instance.new("TextButton")
+		)
+
+	mainToggle.Name =
+		"ToggleButton"
+
+	mainToggle.Size =
+		UDim2.new(
+			0,
+			34,
+			0,
+			34
+		)
+
+	mainToggle.Position =
+		UDim2.new(
+			0,
+			6,
+			0,
+			6
+		)
+
 	mainToggle.BackgroundColor3 =
 		Feature._aimbotEnabled
-		and Color3.fromRGB(0, 200, 80)
-		or Color3.fromRGB(200, 50, 50)
+		and Color3.fromRGB(
+			0,
+			200,
+			80
+		)
+		or Color3.fromRGB(
+			200,
+			50,
+			50
+		)
 
-	mainToggle.BackgroundTransparency = 0.3
-	mainToggle.BorderSizePixel = 0
-	mainToggle.Text = Feature._aimbotEnabled and "ON" or "OFF"
-	mainToggle.TextColor3 = Color3.fromRGB(255, 255, 255)
+	mainToggle.BackgroundTransparency =
+		0.3
+
+	mainToggle.BorderSizePixel =
+		0
+
+	mainToggle.Text =
+		Feature._aimbotEnabled
+		and "ON"
+		or "OFF"
+
+	mainToggle.TextColor3 =
+		Color3.fromRGB(
+			255,
+			255,
+			255
+		)
+
 	mainToggle.TextSize = 12
-	mainToggle.Font = Enum.Font.GothamBold
-	mainToggle.Parent = mainFrame
-	elements.mainToggle = mainToggle
+	mainToggle.Font =
+		Enum.Font.GothamBold
 
-	local buttonCorner = Feature._trackInstance(Instance.new("UICorner"))
-	buttonCorner.CornerRadius = UDim.new(0, 4)
-	buttonCorner.Parent = mainToggle
+	mainToggle.Parent =
+		mainFrame
+
+	elements.mainToggle =
+		mainToggle
+
+	local buttonCorner =
+		Feature._trackInstance(
+			Instance.new("UICorner")
+		)
+
+	buttonCorner.CornerRadius =
+		UDim.new(0, 4)
+
+	buttonCorner.Parent =
+		mainToggle
 
 	-- ========================================
 	-- FOV BUTTON
 	-- ========================================
 
-	local fovToggle = Feature._trackInstance(Instance.new("TextButton"))
-	fovToggle.Name = "FOVToggle"
-	fovToggle.Size = UDim2.new(0, 20, 0, 20)
-	fovToggle.Position = UDim2.new(0.5, 0, 1, 21)
-	fovToggle.AnchorPoint = Vector2.new(0.5, 1)
+	local fovToggle =
+		Feature._trackInstance(
+			Instance.new("TextButton")
+		)
+
+	fovToggle.Name =
+		"FOVToggle"
+
+	fovToggle.Size =
+		UDim2.new(
+			0,
+			20,
+			0,
+			20
+		)
+
+	fovToggle.Position =
+		UDim2.new(
+			0.5,
+			0,
+			1,
+			21
+		)
+
+	fovToggle.AnchorPoint =
+		Vector2.new(
+			0.5,
+			1
+		)
+
 	fovToggle.BackgroundColor3 =
 		Feature._showFOV
-		and Color3.fromRGB(255, 80, 0)
-		or Color3.fromRGB(80, 80, 80)
+		and Color3.fromRGB(
+			255,
+			80,
+			0
+		)
+		or Color3.fromRGB(
+			80,
+			80,
+			80
+		)
 
-	fovToggle.BackgroundTransparency = 0.2
-	fovToggle.BorderSizePixel = 0
+	fovToggle.BackgroundTransparency =
+		0.2
+
+	fovToggle.BorderSizePixel =
+		0
+
 	fovToggle.Text = "F"
-	fovToggle.TextColor3 = Color3.fromRGB(255, 255, 255)
-	fovToggle.TextSize = 10
-	fovToggle.Font = Enum.Font.GothamBold
-	fovToggle.Parent = mainFrame
-	elements.fovToggle = fovToggle
 
-	local fovCorner = Feature._trackInstance(Instance.new("UICorner"))
-	fovCorner.CornerRadius = UDim.new(0, 4)
-	fovCorner.Parent = fovToggle
+	fovToggle.TextColor3 =
+		Color3.fromRGB(
+			255,
+			255,
+			255
+		)
+
+	fovToggle.TextSize = 10
+	fovToggle.Font =
+		Enum.Font.GothamBold
+
+	fovToggle.Parent =
+		mainFrame
+
+	elements.fovToggle =
+		fovToggle
+
+	local fovCorner =
+		Feature._trackInstance(
+			Instance.new("UICorner")
+		)
+
+	fovCorner.CornerRadius =
+		UDim.new(0, 4)
+
+	fovCorner.Parent =
+		fovToggle
 
 	-- ========================================
 	-- FOV ANGLE LABEL
 	-- ========================================
 
-	local fovAngleLabel = Feature._trackInstance(Instance.new("TextButton"))
-	fovAngleLabel.Name = "FOVAngleLabel"
-	fovAngleLabel.Size = UDim2.new(0, 38, 0, 18)
-	fovAngleLabel.Position = UDim2.new(0.5, 0, 0, -10)
-	fovAngleLabel.AnchorPoint = Vector2.new(0.5, 0.5)
-	fovAngleLabel.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
-	fovAngleLabel.BackgroundTransparency = 0.3
-	fovAngleLabel.BorderSizePixel = 0
-	fovAngleLabel.Text = Feature._fov .. "°"
-	fovAngleLabel.TextColor3 = Color3.fromRGB(255, 200, 100)
-	fovAngleLabel.TextSize = 10
-	fovAngleLabel.Font = Enum.Font.GothamBold
-	fovAngleLabel.AutoButtonColor = false
-	fovAngleLabel.Parent = mainFrame
-	elements.fovAngleLabel = fovAngleLabel
+	local fovAngleLabel =
+		Feature._trackInstance(
+			Instance.new("TextButton")
+		)
 
-	local angleCorner = Feature._trackInstance(Instance.new("UICorner"))
-	angleCorner.CornerRadius = UDim.new(0, 3)
-	angleCorner.Parent = fovAngleLabel
+	fovAngleLabel.Name =
+		"FOVAngleLabel"
+
+	fovAngleLabel.Size =
+		UDim2.new(
+			0,
+			38,
+			0,
+			18
+		)
+
+	fovAngleLabel.Position =
+		UDim2.new(
+			0.5,
+			0,
+			0,
+			-10
+		)
+
+	fovAngleLabel.AnchorPoint =
+		Vector2.new(
+			0.5,
+			0.5
+		)
+
+	fovAngleLabel.BackgroundColor3 =
+		Color3.fromRGB(
+			20,
+			20,
+			30
+		)
+
+	fovAngleLabel.BackgroundTransparency =
+		0.3
+
+	fovAngleLabel.BorderSizePixel =
+		0
+
+	fovAngleLabel.Text =
+		Feature._fov .. "°"
+
+	fovAngleLabel.TextColor3 =
+		Color3.fromRGB(
+			255,
+			200,
+			100
+		)
+
+	fovAngleLabel.TextSize = 10
+	fovAngleLabel.Font =
+		Enum.Font.GothamBold
+
+	fovAngleLabel.AutoButtonColor =
+		false
+
+	fovAngleLabel.Parent =
+		mainFrame
+
+	elements.fovAngleLabel =
+		fovAngleLabel
+
+	local angleCorner =
+		Feature._trackInstance(
+			Instance.new("UICorner")
+		)
+
+	angleCorner.CornerRadius =
+		UDim.new(0, 3)
+
+	angleCorner.Parent =
+		fovAngleLabel
 
 	-- ========================================
 	-- FOV SLIDER
 	-- ========================================
 
-	local fovSlider = Feature._trackInstance(Instance.new("Frame"))
-	fovSlider.Name = "FOVSlider"
-	fovSlider.Size = UDim2.new(0, 100, 0, 20)
-	fovSlider.Position = UDim2.new(0.5, 0, 0, -34)
-	fovSlider.AnchorPoint = Vector2.new(0.5, 1)
-	fovSlider.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
-	fovSlider.BackgroundTransparency = 0.15
-	fovSlider.BorderSizePixel = 0
-	fovSlider.Visible = false
-	fovSlider.Parent = mainFrame
-	elements.fovSlider = fovSlider
+	local fovSlider =
+		Feature._trackInstance(
+			Instance.new("Frame")
+		)
 
-	local sliderCorner = Feature._trackInstance(Instance.new("UICorner"))
-	sliderCorner.CornerRadius = UDim.new(0, 5)
-	sliderCorner.Parent = fovSlider
+	fovSlider.Name =
+		"FOVSlider"
 
-	local sliderTrack = Feature._trackInstance(Instance.new("Frame"))
-	sliderTrack.Name = "Track"
-	sliderTrack.Size = UDim2.new(0, 82, 0, 4)
-	sliderTrack.Position = UDim2.new(0.5, 0, 0.5, 0)
-	sliderTrack.AnchorPoint = Vector2.new(0.5, 0.5)
-	sliderTrack.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-	sliderTrack.BorderSizePixel = 0
-	sliderTrack.Parent = fovSlider
-	elements.sliderTrack = sliderTrack
+	fovSlider.Size =
+		UDim2.new(
+			0,
+			100,
+			0,
+			20
+		)
 
-	local trackCorner = Feature._trackInstance(Instance.new("UICorner"))
-	trackCorner.CornerRadius = UDim.new(1, 0)
-	trackCorner.Parent = sliderTrack
+	fovSlider.Position =
+		UDim2.new(
+			0.5,
+			0,
+			0,
+			-34
+		)
 
-	local sliderFill = Feature._trackInstance(Instance.new("Frame"))
-	sliderFill.Name = "Fill"
-	sliderFill.Size = UDim2.new(0, 0, 1, 0)
-	sliderFill.BackgroundColor3 = Color3.fromRGB(255, 80, 0)
-	sliderFill.BorderSizePixel = 0
-	sliderFill.Parent = sliderTrack
-	elements.sliderFill = sliderFill
+	fovSlider.AnchorPoint =
+		Vector2.new(
+			0.5,
+			1
+		)
 
-	local fillCorner = Feature._trackInstance(Instance.new("UICorner"))
-	fillCorner.CornerRadius = UDim.new(1, 0)
-	fillCorner.Parent = sliderFill
+	fovSlider.BackgroundColor3 =
+		Color3.fromRGB(
+			20,
+			20,
+			30
+		)
 
-	local sliderKnob = Feature._trackInstance(Instance.new("Frame"))
-	sliderKnob.Name = "Knob"
-	sliderKnob.Size = UDim2.new(0, 10, 0, 10)
-	sliderKnob.AnchorPoint = Vector2.new(0.5, 0.5)
-	sliderKnob.BackgroundColor3 = Color3.fromRGB(255, 180, 80)
-	sliderKnob.BorderSizePixel = 0
-	sliderKnob.Parent = sliderTrack
-	elements.sliderKnob = sliderKnob
+	fovSlider.BackgroundTransparency =
+		0.15
 
-	local knobCorner = Feature._trackInstance(Instance.new("UICorner"))
-	knobCorner.CornerRadius = UDim.new(1, 0)
-	knobCorner.Parent = sliderKnob
+	fovSlider.BorderSizePixel =
+		0
+
+	fovSlider.Visible =
+		false
+
+	fovSlider.Parent =
+		mainFrame
+
+	elements.fovSlider =
+		fovSlider
+
+	local sliderCorner =
+		Feature._trackInstance(
+			Instance.new("UICorner")
+		)
+
+	sliderCorner.CornerRadius =
+		UDim.new(0, 5)
+
+	sliderCorner.Parent =
+		fovSlider
+
+	local sliderTrack =
+		Feature._trackInstance(
+			Instance.new("Frame")
+		)
+
+	sliderTrack.Name =
+		"Track"
+
+	sliderTrack.Size =
+		UDim2.new(
+			0,
+			82,
+			0,
+			4
+		)
+
+	sliderTrack.Position =
+		UDim2.new(
+			0.5,
+			0,
+			0.5,
+			0
+		)
+
+	sliderTrack.AnchorPoint =
+		Vector2.new(
+			0.5,
+			0.5
+		)
+
+	sliderTrack.BackgroundColor3 =
+		Color3.fromRGB(
+			80,
+			80,
+			80
+		)
+
+	sliderTrack.BorderSizePixel =
+		0
+
+	sliderTrack.Parent =
+		fovSlider
+
+	elements.sliderTrack =
+		sliderTrack
+
+	local trackCorner =
+		Feature._trackInstance(
+			Instance.new("UICorner")
+		)
+
+	trackCorner.CornerRadius =
+		UDim.new(1, 0)
+
+	trackCorner.Parent =
+		sliderTrack
+
+	local sliderFill =
+		Feature._trackInstance(
+			Instance.new("Frame")
+		)
+
+	sliderFill.Name =
+		"Fill"
+
+	sliderFill.Size =
+		UDim2.new(
+			0,
+			0,
+			1,
+			0
+		)
+
+	sliderFill.BackgroundColor3 =
+		Color3.fromRGB(
+			255,
+			80,
+			0
+		)
+
+	sliderFill.BorderSizePixel =
+		0
+
+	sliderFill.Parent =
+		sliderTrack
+
+	elements.sliderFill =
+		sliderFill
+
+	local fillCorner =
+		Feature._trackInstance(
+			Instance.new("UICorner")
+		)
+
+	fillCorner.CornerRadius =
+		UDim.new(1, 0)
+
+	fillCorner.Parent =
+		sliderFill
+
+	local sliderKnob =
+		Feature._trackInstance(
+			Instance.new("Frame")
+		)
+
+	sliderKnob.Name =
+		"Knob"
+
+	sliderKnob.Size =
+		UDim2.new(
+			0,
+			10,
+			0,
+			10
+		)
+
+	sliderKnob.AnchorPoint =
+		Vector2.new(
+			0.5,
+			0.5
+		)
+
+	sliderKnob.BackgroundColor3 =
+		Color3.fromRGB(
+			255,
+			180,
+			80
+		)
+
+	sliderKnob.BorderSizePixel =
+		0
+
+	sliderKnob.Parent =
+		sliderTrack
+
+	elements.sliderKnob =
+		sliderKnob
+
+	local knobCorner =
+		Feature._trackInstance(
+			Instance.new("UICorner")
+		)
+
+	knobCorner.CornerRadius =
+		UDim.new(1, 0)
+
+	knobCorner.Parent =
+		sliderKnob
 
 	-- ========================================
 	-- GUI CONNECTIONS
 	-- ========================================
 
-	Feature._trackConnection(fovAngleLabel.MouseButton1Click:Connect(function()
-		if Feature._enabled then
-			Feature._toggleFOVSlider()
-		end
-	end))
-
-	Feature._trackConnection(sliderTrack.InputBegan:Connect(function(input)
-		if not Feature._enabled then
-			return
-		end
-
-		if input.UserInputType == Enum.UserInputType.MouseButton1
-			or input.UserInputType == Enum.UserInputType.Touch then
-
-			Feature._sliderDragging = true
-			Feature._startSliderCapture()
-			Feature._updateSliderFromX(input.Position.X)
-		end
-	end))
-
-	Feature._trackConnection(fovSlider.InputBegan:Connect(function(input)
-		if not Feature._enabled then
-			return
-		end
-
-		if input.UserInputType == Enum.UserInputType.MouseButton1
-			or input.UserInputType == Enum.UserInputType.Touch then
-
-			Feature._sliderDragging = true
-			Feature._startSliderCapture()
-			Feature._updateSliderFromX(input.Position.X)
-		end
-	end))
-
 	Feature._trackConnection(
-		Feature._userInputService.InputChanged:Connect(function(input)
-			if not Feature._enabled or not Feature._sliderDragging then
-				return
+		fovAngleLabel.MouseButton1Click:Connect(
+			function()
+				if Feature._enabled then
+					Feature._toggleFOVSlider()
+				end
 			end
-
-			if input.UserInputType == Enum.UserInputType.MouseMovement
-				or input.UserInputType == Enum.UserInputType.Touch then
-
-				Feature._updateSliderFromX(input.Position.X)
-			end
-		end)
+		)
 	)
 
 	Feature._trackConnection(
-		Feature._userInputService.InputEnded:Connect(function(input)
-			if input.UserInputType == Enum.UserInputType.MouseButton1
-				or input.UserInputType == Enum.UserInputType.Touch then
+		sliderTrack.InputBegan:Connect(
+			function(input)
+				if not Feature._enabled then
+					return
+				end
 
-				Feature._sliderDragging = false
-				Feature._stopSliderCapture()
+				if input.UserInputType
+					== Enum.UserInputType.MouseButton1
+					or input.UserInputType
+						== Enum.UserInputType.Touch then
+
+					Feature._sliderDragging =
+						true
+
+					Feature._startSliderCapture()
+
+					Feature._updateSliderFromX(
+						input.Position.X
+					)
+				end
 			end
-		end)
+		)
 	)
 
-	Feature._trackConnection(mainToggle.MouseButton1Click:Connect(function()
-		Feature._setAimbotEnabled(not Feature._aimbotEnabled)
-	end))
+	Feature._trackConnection(
+		fovSlider.InputBegan:Connect(
+			function(input)
+				if not Feature._enabled then
+					return
+				end
 
-	Feature._trackConnection(fovToggle.MouseButton1Click:Connect(function()
-		Feature._setFOVVisible(not Feature._showFOV)
-	end))
+				if input.UserInputType
+					== Enum.UserInputType.MouseButton1
+					or input.UserInputType
+						== Enum.UserInputType.Touch then
+
+					Feature._sliderDragging =
+						true
+
+					Feature._startSliderCapture()
+
+					Feature._updateSliderFromX(
+						input.Position.X
+					)
+				end
+			end
+		)
+	)
+
+	Feature._trackConnection(
+		Feature._userInputService.InputChanged:Connect(
+			function(input)
+				if not Feature._enabled
+					or not Feature._sliderDragging then
+
+					return
+				end
+
+				if input.UserInputType
+					== Enum.UserInputType.MouseMovement
+					or input.UserInputType
+						== Enum.UserInputType.Touch then
+
+					Feature._updateSliderFromX(
+						input.Position.X
+					)
+				end
+			end
+		)
+	)
+
+	Feature._trackConnection(
+		Feature._userInputService.InputEnded:Connect(
+			function(input)
+				if input.UserInputType
+					== Enum.UserInputType.MouseButton1
+					or input.UserInputType
+						== Enum.UserInputType.Touch then
+
+					Feature._sliderDragging =
+						false
+
+					Feature._stopSliderCapture()
+				end
+			end
+		)
+	)
+
+	Feature._trackConnection(
+		mainToggle.MouseButton1Click:Connect(
+			function()
+				Feature._setAimbotEnabled(
+					not Feature._aimbotEnabled
+				)
+			end
+		)
+	)
+
+	Feature._trackConnection(
+		fovToggle.MouseButton1Click:Connect(
+			function()
+				Feature._setFOVVisible(
+					not Feature._showFOV
+				)
+			end
+		)
+	)
 
 	Feature._updateGUI()
 end
@@ -1479,7 +2257,9 @@ function Feature._destroyGUI()
 	Feature._stopSliderCapture()
 
 	if Feature._guiElements.container then
-		Feature._safeDestroy(Feature._guiElements.container)
+		Feature._safeDestroy(
+			Feature._guiElements.container
+		)
 	end
 
 	Feature._guiElements = {}
@@ -1491,17 +2271,30 @@ end
 
 function Feature._setupInput()
 	Feature._trackConnection(
-		Feature._userInputService.InputBegan:Connect(function(input, gameProcessed)
-			if not Feature._enabled or gameProcessed then
-				return
-			end
+		Feature._userInputService.InputBegan:Connect(
+			function(input, gameProcessed)
+				if not Feature._enabled
+					or gameProcessed then
 
-			if input.KeyCode == Enum.KeyCode.F then
-				Feature._setAimbotEnabled(not Feature._aimbotEnabled)
-			elseif input.KeyCode == Enum.KeyCode.C then
-				Feature._setFOVVisible(not Feature._showFOV)
+					return
+				end
+
+				if input.KeyCode
+					== Enum.KeyCode.F then
+
+					Feature._setAimbotEnabled(
+						not Feature._aimbotEnabled
+					)
+
+				elseif input.KeyCode
+					== Enum.KeyCode.C then
+
+					Feature._setFOVVisible(
+						not Feature._showFOV
+					)
+				end
 			end
-		end)
+		)
 	)
 end
 
@@ -1510,40 +2303,54 @@ end
 -- ============================================
 
 function Feature._setupCharacterMonitor()
-	local player = Feature._players.LocalPlayer
+	local player =
+		Feature._players.LocalPlayer
 
 	if not player then
 		return
 	end
 
-	local generation = Feature._generation
+	local generation =
+		Feature._generation
 
 	Feature._trackConnection(
-		player.CharacterAdded:Connect(function()
-			if generation ~= Feature._generation or not Feature._enabled then
-				return
-			end
+		player.CharacterAdded:Connect(
+			function()
+				if generation ~= Feature._generation
+					or not Feature._enabled then
 
-			local thread = task.spawn(function()
-				task.wait(0.3)
-
-				if generation ~= Feature._generation or not Feature._enabled then
 					return
 				end
 
-				Feature._targetCache.part = nil
-				Feature._targetCache.time = 0
-				Feature._invalidateGunCache()
-				Feature._invalidateMonsterCache()
+				local thread =
+					task.spawn(function()
+						task.wait(0.3)
 
-				if Feature._aimbotEnabled then
-					Feature._setFPP(true)
-					Feature._startAimbot()
-				end
-			end)
+						if generation
+								~= Feature._generation
+							or not Feature._enabled then
 
-			Feature._trackTask(thread)
-		end)
+							return
+						end
+
+						Feature._targetCache.part =
+							nil
+
+						Feature._targetCache.time =
+							0
+
+						Feature._invalidateGunCache()
+						Feature._invalidateMonsterCache()
+
+						if Feature._aimbotEnabled then
+							Feature._setFPP(true)
+							Feature._startAimbot()
+						end
+					end)
+
+				Feature._trackTask(thread)
+			end
+		)
 	)
 end
 
@@ -1552,17 +2359,25 @@ end
 -- ============================================
 
 function Feature._cleanupDrawing()
-	Feature._hidePool(Feature._fovLines)
-	Feature._hidePool(Feature._fovExtraLines)
+	Feature._hidePool(
+		Feature._fovLines
+	)
 
-	for index, drawing in pairs(Feature._modifiedDrawing) do
+	Feature._hidePool(
+		Feature._fovExtraLines
+	)
+
+	for index, drawing in pairs(
+		Feature._modifiedDrawing
+	) do
 		if drawing then
 			pcall(function()
 				drawing:Remove()
 			end)
 		end
 
-		Feature._modifiedDrawing[index] = nil
+		Feature._modifiedDrawing[index] =
+			nil
 	end
 
 	Feature._fovLines = {}
@@ -1583,7 +2398,10 @@ function Feature.enable()
 	Feature._sliderDragging = false
 	Feature._lastFireTime = 0
 	Feature._playerCharacters = {}
-	Feature._targetCache = {part = nil, time = 0}
+	Feature._targetCache = {
+		part = nil,
+		time = 0
+	}
 	Feature._monsterCache = {}
 	Feature._monsterCacheTime = 0
 	Feature._monsterCacheDirty = true
@@ -1618,25 +2436,34 @@ function Feature.cleanup()
 	Feature._stopAimbotLoop()
 	Feature._setFPP(false)
 
-	for index, connection in pairs(Feature._connections) do
+	for index, connection in pairs(
+		Feature._connections
+	) do
 		Feature._safeDisconnect(connection)
-		Feature._connections[index] = nil
+		Feature._connections[index] =
+			nil
 	end
 
 	Feature._connections = {}
 
-	for index, thread in pairs(Feature._tasks) do
+	for index, thread in pairs(
+		Feature._tasks
+	) do
 		Feature._safeCancel(thread)
-		Feature._tasks[index] = nil
+		Feature._tasks[index] =
+			nil
 	end
 
 	Feature._tasks = {}
 
 	Feature._destroyGUI()
 
-	for index, instance in pairs(Feature._instances) do
+	for index, instance in pairs(
+		Feature._instances
+	) do
 		Feature._safeDestroy(instance)
-		Feature._instances[index] = nil
+		Feature._instances[index] =
+			nil
 	end
 
 	Feature._instances = {}
@@ -1644,7 +2471,12 @@ function Feature.cleanup()
 	Feature._cleanupDrawing()
 
 	Feature._playerCharacters = {}
-	Feature._targetCache = {part = nil, time = 0}
+
+	Feature._targetCache = {
+		part = nil,
+		time = 0
+	}
+
 	Feature._monsterCache = {}
 	Feature._monsterCacheTime = 0
 	Feature._monsterCacheDirty = true
