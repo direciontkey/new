@@ -1,0 +1,240 @@
+-- ============================================
+-- AUTO SELL
+-- ============================================
+
+local Feature = {
+	NAME = "Auto Sell",
+	_players = game:GetService("Players"),
+	_replicatedStorage = game:GetService("ReplicatedStorage"),
+	_enabled = false,
+	_generation = 0,
+	_connections = {},
+	_instances = {},
+	_tasks = {},
+	_player = nil,
+	_sellHay = nil,
+	_lastSell = 0,
+}
+
+-- ============================================
+-- SETTINGS
+-- ============================================
+
+Feature._config = {
+	COOLDOWN = 1.5,
+	CHECK_INTERVAL = 0.5,
+	DEFAULT_CAPACITY = 25,
+}
+
+-- ============================================
+-- TRACKING HELPERS
+-- ============================================
+
+function Feature._safeDisconnect(connection)
+	if connection then
+		pcall(function()
+			connection:Disconnect()
+		end)
+	end
+end
+
+function Feature._safeDestroy(instance)
+	if instance then
+		pcall(function()
+			instance:Destroy()
+		end)
+	end
+end
+
+function Feature._safeCancel(thread)
+	if thread then
+		pcall(function()
+			task.cancel(thread)
+		end)
+	end
+end
+
+function Feature._trackConnection(connection)
+	if connection then
+		table.insert(Feature._connections, connection)
+	end
+
+	return connection
+end
+
+function Feature._trackInstance(instance)
+	if instance then
+		table.insert(Feature._instances, instance)
+	end
+
+	return instance
+end
+
+function Feature._trackTask(thread)
+	if thread then
+		table.insert(Feature._tasks, thread)
+	end
+
+	return thread
+end
+
+-- ============================================
+-- BAG STATUS
+-- ============================================
+
+function Feature._isFull()
+	local player = Feature._player
+
+	if not player then
+		return false
+	end
+
+	return (player:GetAttribute("HayHeld") or 0)
+		>= (player:GetAttribute("HayCapacity") or Feature._config.DEFAULT_CAPACITY)
+end
+
+function Feature._hasHay()
+	local player = Feature._player
+
+	if not player then
+		return false
+	end
+
+	return (player:GetAttribute("HayHeld") or 0) > 0
+end
+
+-- ============================================
+-- ATTEMPT SELL
+-- ============================================
+
+function Feature._attemptSell()
+	if not Feature._enabled then
+		return
+	end
+
+	if not Feature._isFull() or not Feature._hasHay() then
+		return
+	end
+
+	local now = os.clock()
+
+	if now - Feature._lastSell < Feature._config.COOLDOWN then
+		return
+	end
+
+	Feature._sellHay:FireServer()
+	Feature._lastSell = now
+end
+
+-- ============================================
+-- SAFETY LOOP
+-- ============================================
+
+function Feature._startSafetyLoop()
+	local generation = Feature._generation
+
+	local thread = task.spawn(function()
+		while generation == Feature._generation and Feature._enabled do
+			Feature._attemptSell()
+			task.wait(Feature._config.CHECK_INTERVAL)
+		end
+	end)
+
+	Feature._trackTask(thread)
+end
+
+-- ============================================
+-- ENABLE
+-- ============================================
+
+function Feature.enable()
+	Feature.cleanup()
+
+	Feature._generation += 1
+	Feature._enabled = true
+	Feature._player = Feature._players.LocalPlayer
+	Feature._lastSell = 0
+
+	if not Feature._player then
+		Feature._enabled = false
+		Feature.cleanup()
+		return
+	end
+
+	local success, sellHay = pcall(function()
+		return Feature._replicatedStorage
+			:WaitForChild("NeedleHaystack")
+			:WaitForChild("SellHay")
+	end)
+
+	if not success or not sellHay then
+		Feature._enabled = false
+		Feature.cleanup()
+		return
+	end
+
+	Feature._sellHay = sellHay
+
+	Feature._trackConnection(
+		Feature._player:GetAttributeChangedSignal("HayHeld"):Connect(function()
+			if not Feature._enabled then
+				return
+			end
+
+			Feature._attemptSell()
+		end)
+	)
+
+	Feature._startSafetyLoop()
+end
+
+-- ============================================
+-- DISABLE
+-- ============================================
+
+function Feature.disable()
+	Feature._enabled = false
+	Feature.cleanup()
+end
+
+-- ============================================
+-- IS ENABLED
+-- ============================================
+
+function Feature.isEnabled()
+	return Feature._enabled
+end
+
+-- ============================================
+-- CLEANUP
+-- ============================================
+
+function Feature.cleanup()
+	Feature._enabled = false
+	Feature._generation += 1
+	Feature._lastSell = 0
+
+	for _, connection in ipairs(Feature._connections) do
+		Feature._safeDisconnect(connection)
+	end
+
+	table.clear(Feature._connections)
+
+	for _, thread in ipairs(Feature._tasks) do
+		Feature._safeCancel(thread)
+	end
+
+	table.clear(Feature._tasks)
+
+	for _, instance in ipairs(Feature._instances) do
+		Feature._safeDestroy(instance)
+	end
+
+	table.clear(Feature._instances)
+
+	Feature._player = nil
+	Feature._sellHay = nil
+	Feature._lastSell = 0
+end
+
+return Feature
