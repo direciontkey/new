@@ -281,8 +281,8 @@ function Feature._modifyConfig(config, gunName)
 
 	if isEclipse then
 		config.ExplosiveEnabled = true
-		config.ExplosionRadius = 30
-		config.ExplosionKnockbackPower = 150
+		config.ExplosionRadius = 60
+		config.ExplosionKnockbackPower = 500
 
 		config.ProjectileType = "Rocket"
 		config.Range = 9999
