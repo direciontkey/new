@@ -25,16 +25,13 @@ local Feature = {
 
 Feature._config = {
 	CHECK_INTERVAL = 0.0001,
-	FUEL_START = 20,
-	FUEL_STOP = 85,
-
+	FUEL_LIMIT = 80,
 	COOLDOWNS = {
 		FirePlacePrompt = 0.1,
 		TurretCrate = 0.15,
 		WeaponsCrate = 0.15,
 		WrenchCollect = 0.15,
 	},
-
 	BLOCKED = {
 		FixingTheTrain = true,
 		DriverStuff = true,
@@ -73,6 +70,7 @@ function Feature._trackConnection(connection)
 	if connection then
 		Feature._connections[#Feature._connections + 1] = connection
 	end
+
 	return connection
 end
 
@@ -80,6 +78,7 @@ function Feature._trackInstance(instance)
 	if instance then
 		Feature._instances[#Feature._instances + 1] = instance
 	end
+
 	return instance
 end
 
@@ -87,6 +86,7 @@ function Feature._trackTask(thread)
 	if thread then
 		Feature._tasks[#Feature._tasks + 1] = thread
 	end
+
 	return thread
 end
 
@@ -217,18 +217,8 @@ function Feature._startAutoCollect()
 					continue
 				end
 
-				-- ============================================
-				-- FIREPLACE FUEL CHECK
-				-- ============================================
-
-				if info.firePlace then
-					if not numericFuel then
-						continue
-					end
-
-					if fuel > Feature._config.FUEL_START then
-						continue
-					end
+				if info.firePlace and numericFuel and fuel > Feature._config.FUEL_LIMIT then
+					continue
 				end
 
 				local position = Feature._getPromptPosition(prompt)
@@ -251,22 +241,10 @@ function Feature._startAutoCollect()
 					end
 				end
 
-				-- ============================================
-				-- FINAL FIREPLACE FUEL CHECK
-				-- ============================================
-
 				if info.firePlace then
 					fuel = Feature._trainFuel.Value
 
-					if typeof(fuel) ~= "number" then
-						continue
-					end
-
-					if fuel > Feature._config.FUEL_START then
-						continue
-					end
-
-					if fuel >= Feature._config.FUEL_STOP then
+					if typeof(fuel) == "number" and fuel > Feature._config.FUEL_LIMIT then
 						continue
 					end
 				end
@@ -306,7 +284,6 @@ function Feature.enable()
 	end
 
 	Feature._trainFuel = trainFuel
-
 	Feature._scanPrompts()
 
 	Feature._trackConnection(
