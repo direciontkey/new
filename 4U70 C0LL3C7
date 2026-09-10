@@ -17,7 +17,6 @@ local Feature = {
 	_lastFired = {},
 	_lastCheck = 0,
 	_trainFuel = nil,
-	_firePlaceActive = false,
 }
 
 -- ============================================
@@ -27,13 +26,15 @@ local Feature = {
 Feature._config = {
 	CHECK_INTERVAL = 0.0001,
 	FUEL_START = 20,
-	FUEL_STOP = 80,
+	FUEL_STOP = 85,
+
 	COOLDOWNS = {
 		FirePlacePrompt = 0.1,
 		TurretCrate = 0.15,
 		WeaponsCrate = 0.15,
 		WrenchCollect = 0.15,
 	},
+
 	BLOCKED = {
 		FixingTheTrain = true,
 		DriverStuff = true,
@@ -177,34 +178,6 @@ function Feature._scanPrompts()
 end
 
 -- ============================================
--- UPDATE FIREPLACE STATE
--- ============================================
-
-function Feature._updateFirePlaceState()
-	if not Feature._trainFuel then
-		return
-	end
-
-	local success, fuel = pcall(function()
-		return Feature._trainFuel.Value
-	end)
-
-	if not success or typeof(fuel) ~= "number" then
-		return
-	end
-
-	if not Feature._firePlaceActive then
-		if fuel <= Feature._config.FUEL_START then
-			Feature._firePlaceActive = true
-		end
-	else
-		if fuel >= Feature._config.FUEL_STOP then
-			Feature._firePlaceActive = false
-		end
-	end
-end
-
--- ============================================
 -- AUTO COLLECT
 -- ============================================
 
@@ -233,17 +206,9 @@ function Feature._startAutoCollect()
 				return
 			end
 
-			-- ============================================
-			-- FIREPLACE FUEL STATE
-			-- ============================================
-
-			Feature._updateFirePlaceState()
-
-			-- ============================================
-			-- COLLECT PROMPTS
-			-- ============================================
-
 			local rootPosition = root.Position
+			local fuel = Feature._trainFuel.Value
+			local numericFuel = typeof(fuel) == "number"
 
 			for prompt, info in pairs(Feature._prompts) do
 				if not prompt.Parent then
@@ -252,9 +217,18 @@ function Feature._startAutoCollect()
 					continue
 				end
 
-				-- Fireplace has its own 20/80 hysteresis.
-				if info.firePlace and not Feature._firePlaceActive then
-					continue
+				-- ============================================
+				-- FIREPLACE FUEL CHECK
+				-- ============================================
+
+				if info.firePlace then
+					if not numericFuel then
+						continue
+					end
+
+					if fuel > Feature._config.FUEL_START then
+						continue
+					end
 				end
 
 				local position = Feature._getPromptPosition(prompt)
@@ -277,23 +251,22 @@ function Feature._startAutoCollect()
 					end
 				end
 
-				-- Check the fuel one more time immediately before
-				-- firing a fireplace prompt.
-				if info.firePlace then
-					local success, fuel = pcall(function()
-						return Feature._trainFuel.Value
-					end)
+				-- ============================================
+				-- FINAL FIREPLACE FUEL CHECK
+				-- ============================================
 
-					if not success or typeof(fuel) ~= "number" then
+				if info.firePlace then
+					fuel = Feature._trainFuel.Value
+
+					if typeof(fuel) ~= "number" then
+						continue
+					end
+
+					if fuel > Feature._config.FUEL_START then
 						continue
 					end
 
 					if fuel >= Feature._config.FUEL_STOP then
-						Feature._firePlaceActive = false
-						continue
-					end
-
-					if not Feature._firePlaceActive then
 						continue
 					end
 				end
@@ -320,7 +293,6 @@ function Feature.enable()
 	Feature._lastCheck = 0
 	Feature._prompts = {}
 	Feature._lastFired = {}
-	Feature._firePlaceActive = false
 
 	local success, trainFuel = pcall(function()
 		return Feature._replicatedStorage
@@ -395,7 +367,6 @@ function Feature.cleanup()
 	Feature._prompts = {}
 	Feature._lastFired = {}
 	Feature._trainFuel = nil
-	Feature._firePlaceActive = false
 end
 
 return Feature
