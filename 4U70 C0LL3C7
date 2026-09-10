@@ -17,6 +17,7 @@ local Feature = {
 	_lastFired = {},
 	_lastCheck = 0,
 	_trainFuel = nil,
+	_firePlaceCount = 0,
 }
 
 -- ============================================
@@ -25,7 +26,8 @@ local Feature = {
 
 Feature._config = {
 	CHECK_INTERVAL = 0.0001,
-	FUEL_LIMIT = 80,
+	FIREPLACE_FUEL_LIMIT = 20,
+	FIREPLACE_MAX_CLICKS = 12,
 	COOLDOWNS = {
 		FirePlacePrompt = 0.1,
 		TurretCrate = 0.15,
@@ -207,6 +209,14 @@ function Feature._startAutoCollect()
 			local fuel = Feature._trainFuel.Value
 			local numericFuel = typeof(fuel) == "number"
 
+			-- ============================================
+			-- RESET FIREPLACE CYCLE
+			-- ============================================
+
+			if numericFuel and fuel > Feature._config.FIREPLACE_FUEL_LIMIT then
+				Feature._firePlaceCount = 0
+			end
+
 			for prompt, info in pairs(Feature._prompts) do
 				if not prompt.Parent then
 					Feature._prompts[prompt] = nil
@@ -214,8 +224,22 @@ function Feature._startAutoCollect()
 					continue
 				end
 
-				if info.firePlace and numericFuel and fuel > Feature._config.FUEL_LIMIT then
-					continue
+				-- ============================================
+				-- FIREPLACE RESTRICTIONS
+				-- ============================================
+
+				if info.firePlace then
+					if not numericFuel then
+						continue
+					end
+
+					if fuel > Feature._config.FIREPLACE_FUEL_LIMIT then
+						continue
+					end
+
+					if Feature._firePlaceCount >= Feature._config.FIREPLACE_MAX_CLICKS then
+						continue
+					end
 				end
 
 				local position = Feature._getPromptPosition(prompt)
@@ -241,7 +265,15 @@ function Feature._startAutoCollect()
 				if info.firePlace then
 					fuel = Feature._trainFuel.Value
 
-					if typeof(fuel) == "number" and fuel > Feature._config.FUEL_LIMIT then
+					if typeof(fuel) ~= "number" then
+						continue
+					end
+
+					if fuel > Feature._config.FIREPLACE_FUEL_LIMIT then
+						continue
+					end
+
+					if Feature._firePlaceCount >= Feature._config.FIREPLACE_MAX_CLICKS then
 						continue
 					end
 				end
@@ -251,6 +283,10 @@ function Feature._startAutoCollect()
 
 				if cooldown then
 					Feature._lastFired[prompt] = now
+				end
+
+				if info.firePlace then
+					Feature._firePlaceCount += 1
 				end
 			end
 		end)
@@ -266,6 +302,7 @@ function Feature.enable()
 	Feature._generation += 1
 	Feature._enabled = true
 	Feature._lastCheck = 0
+	Feature._firePlaceCount = 0
 	Feature._prompts = {}
 	Feature._lastFired = {}
 
@@ -318,6 +355,7 @@ function Feature.cleanup()
 	Feature._enabled = false
 	Feature._generation += 1
 	Feature._lastCheck = 0
+	Feature._firePlaceCount = 0
 
 	for index, connection in pairs(Feature._connections) do
 		Feature._safeDisconnect(connection)
