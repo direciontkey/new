@@ -32,6 +32,7 @@ local Feature = {
 	_hasDrawing = false,
 	_sliderDragging = false,
 	_aimbotRenderConnection = nil,
+	_lastFToggleClick = 0,
 }
 
 -- ============================================
@@ -55,6 +56,7 @@ Feature._config = {
 	FOV_VISUAL_DISTANCE = 100,
 	FOV_VISUAL_LENGTH = 0.75,
 	EXACT_BOUNDARY_SEGMENTS = 96,
+	DOUBLE_CLICK_TIME = 0.25,
 }
 
 -- ============================================
@@ -997,10 +999,6 @@ function Feature._createGUI()
 	-- GUI CONNECTIONS
 	-- ========================================
 
-	Feature._trackConnection(fovAngleLabel.MouseButton1Click:Connect(function()
-		if Feature._enabled then Feature._toggleFOVSlider() end
-	end))
-
 	Feature._trackConnection(sliderTrack.InputBegan:Connect(function(input)
 		if not Feature._enabled then return end
 		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
@@ -1038,7 +1036,17 @@ function Feature._createGUI()
 	end))
 
 	Feature._trackConnection(fovToggle.MouseButton1Click:Connect(function()
-		Feature._setFOVVisible(not Feature._showFOV)
+		if not Feature._enabled then return end
+
+		local currentTime = os.clock()
+
+		if currentTime - Feature._lastFToggleClick <= Feature._config.DOUBLE_CLICK_TIME then
+			Feature._lastFToggleClick = 0
+			Feature._toggleFOVSlider()
+		else
+			Feature._lastFToggleClick = currentTime
+			Feature._setFOVVisible(not Feature._showFOV)
+		end
 	end))
 
 	Feature._updateGUI()
@@ -1122,6 +1130,7 @@ function Feature.enable()
 	Feature._externalPause = false
 	Feature._sliderDragging = false
 	Feature._lastFireTime = 0
+	Feature._lastFToggleClick = 0
 	Feature._playerCharacters = {}
 	Feature._targetCache = {part = nil, time = 0}
 	Feature._monsterCache = {}
@@ -1152,6 +1161,7 @@ function Feature.cleanup()
 	Feature._externalPause = false
 	Feature._sliderDragging = false
 	Feature._lastFireTime = 0
+	Feature._lastFToggleClick = 0
 	Feature._stopSliderCapture()
 	Feature._stopAimbotLoop()
 	Feature._setFPP(false)
