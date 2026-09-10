@@ -17,8 +17,7 @@ local Feature = {
 	_lastFired = {},
 	_lastCheck = 0,
 	_trainFuel = nil,
-	_firePlaceClicks = 0,
-	_firePlaceWasLow = false,
+	_firePlaceActive = false,
 }
 
 -- ============================================
@@ -27,8 +26,8 @@ local Feature = {
 
 Feature._config = {
 	CHECK_INTERVAL = 0.0001,
-	FIREPLACE_FUEL_LIMIT = 20,
-	FIREPLACE_MAX_CLICKS = 12,
+	FUEL_START = 20,
+	FUEL_STOP = 80,
 	COOLDOWNS = {
 		FirePlacePrompt = 0.1,
 		TurretCrate = 0.15,
@@ -178,6 +177,34 @@ function Feature._scanPrompts()
 end
 
 -- ============================================
+-- UPDATE FIREPLACE STATE
+-- ============================================
+
+function Feature._updateFirePlaceState()
+	if not Feature._trainFuel then
+		return
+	end
+
+	local success, fuel = pcall(function()
+		return Feature._trainFuel.Value
+	end)
+
+	if not success or typeof(fuel) ~= "number" then
+		return
+	end
+
+	if not Feature._firePlaceActive then
+		if fuel <= Feature._config.FUEL_START then
+			Feature._firePlaceActive = true
+		end
+	else
+		if fuel >= Feature._config.FUEL_STOP then
+			Feature._firePlaceActive = false
+		end
+	end
+end
+
+-- ============================================
 -- AUTO COLLECT
 -- ============================================
 
@@ -207,19 +234,14 @@ function Feature._startAutoCollect()
 			end
 
 			-- ============================================
-			-- FUEL
+			-- FIREPLACE FUEL STATE
 			-- ============================================
 
-			local fuel = tonumber(Feature._trainFuel.Value)
+			Feature._updateFirePlaceState()
 
-			-- Reset the 12-click limit only after
-			-- fuel has gone above 20.
-			if fuel and fuel > Feature._config.FIREPLACE_FUEL_LIMIT then
-				Feature._firePlaceClicks = 0
-				Feature._firePlaceWasLow = false
-			elseif fuel and fuel <= Feature._config.FIREPLACE_FUEL_LIMIT then
-				Feature._firePlaceWasLow = true
-			end
+			-- ============================================
+			-- COLLECT PROMPTS
+			-- ============================================
 
 			local rootPosition = root.Position
 
@@ -230,27 +252,10 @@ function Feature._startAutoCollect()
 					continue
 				end
 
-				-- ============================================
-				-- FIREPLACE
-				-- ============================================
-
-				if info.firePlace then
-					if not fuel then
-						continue
-					end
-
-					if fuel > Feature._config.FIREPLACE_FUEL_LIMIT then
-						continue
-					end
-
-					if Feature._firePlaceClicks >= Feature._config.FIREPLACE_MAX_CLICKS then
-						continue
-					end
+				-- Fireplace has its own 20/80 hysteresis.
+				if info.firePlace and not Feature._firePlaceActive then
+					continue
 				end
-
-				-- ============================================
-				-- POSITION
-				-- ============================================
 
 				local position = Feature._getPromptPosition(prompt)
 
@@ -262,10 +267,6 @@ function Feature._startAutoCollect()
 					continue
 				end
 
-				-- ============================================
-				-- COOLDOWN
-				-- ============================================
-
 				local cooldown = info.cooldown
 
 				if cooldown then
@@ -276,47 +277,32 @@ function Feature._startAutoCollect()
 					end
 				end
 
-				-- ============================================
-				-- FINAL FIREPLACE CHECK
-				-- ============================================
-
+				-- Check the fuel one more time immediately before
+				-- firing a fireplace prompt.
 				if info.firePlace then
-					fuel = tonumber(Feature._trainFuel.Value)
+					local success, fuel = pcall(function()
+						return Feature._trainFuel.Value
+					end)
 
-					if not fuel then
+					if not success or typeof(fuel) ~= "number" then
 						continue
 					end
 
-					if fuel > Feature._config.FIREPLACE_FUEL_LIMIT then
+					if fuel >= Feature._config.FUEL_STOP then
+						Feature._firePlaceActive = false
 						continue
 					end
 
-					if Feature._firePlaceClicks >= Feature._config.FIREPLACE_MAX_CLICKS then
+					if not Feature._firePlaceActive then
 						continue
 					end
 				end
-
-				-- ============================================
-				-- FIRE PROMPT
-				-- ============================================
 
 				prompt:InputHoldBegin(player)
 				prompt:InputHoldEnd(player)
 
-				-- ============================================
-				-- RECORD ACTIVATION
-				-- ============================================
-
 				if cooldown then
 					Feature._lastFired[prompt] = now
-				end
-
-				if info.firePlace then
-					Feature._firePlaceClicks += 1
-
-					if Feature._firePlaceClicks >= Feature._config.FIREPLACE_MAX_CLICKS then
-						break
-					end
 				end
 			end
 		end)
@@ -332,10 +318,9 @@ function Feature.enable()
 	Feature._generation += 1
 	Feature._enabled = true
 	Feature._lastCheck = 0
-	Feature._firePlaceClicks = 0
-	Feature._firePlaceWasLow = false
 	Feature._prompts = {}
 	Feature._lastFired = {}
+	Feature._firePlaceActive = false
 
 	local success, trainFuel = pcall(function()
 		return Feature._replicatedStorage
@@ -386,8 +371,6 @@ function Feature.cleanup()
 	Feature._enabled = false
 	Feature._generation += 1
 	Feature._lastCheck = 0
-	Feature._firePlaceClicks = 0
-	Feature._firePlaceWasLow = false
 
 	for index, connection in pairs(Feature._connections) do
 		Feature._safeDisconnect(connection)
@@ -412,6 +395,7 @@ function Feature.cleanup()
 	Feature._prompts = {}
 	Feature._lastFired = {}
 	Feature._trainFuel = nil
+	Feature._firePlaceActive = false
 end
 
 return Feature
