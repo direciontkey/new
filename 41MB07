@@ -616,6 +616,38 @@ end
 -- WEAPON EQUIPPING
 -- ============================================
 
+Feature._allowedEquippedWeapons = {
+	["Nemesis"] = true,
+	["Fang"] = true,
+	["Eclipse"] = true,
+	["FlameThrower"] = true,
+	["Spectre"] = true,
+	["MachineGun"] = true,
+	["PPSH"] = true,
+	["Striker"] = true,
+	["Hunter"] = true,
+	["Phantom"] = true,
+	["Drifter"] = true,
+	["Shotgun"] = true,
+	["Viper"] = true,
+	["Rumbler"] = true,
+	["Piercer"] = true,
+	["Revolver"] = true,
+}
+
+function Feature._hasAllowedWeaponEquipped()
+	local player = Feature._players.LocalPlayer
+	if not player then return false end
+
+	local character = player.Character
+	if not character then return false end
+
+	local tool = character:FindFirstChildOfClass("Tool")
+	if not tool then return false end
+
+	return Feature._allowedEquippedWeapons[tool.Name] == true
+end
+
 function Feature._equipWeapon()
 	local remote
 	local success = pcall(function()
@@ -692,11 +724,15 @@ function Feature._setAimbotEnabled(enabled)
 	Feature._aimbotEnabled = enabled
 	if enabled then
 		Feature._invalidateGunCache()
-		if not Feature._equipWeapon() then
-			Feature._aimbotEnabled = false
-			Feature._updateGUI()
-			return
+
+		if not Feature._hasAllowedWeaponEquipped() then
+			if not Feature._equipWeapon() then
+				Feature._aimbotEnabled = false
+				Feature._updateGUI()
+				return
+			end
 		end
+
 		Feature._setFPP(true)
 		Feature._startAimbot()
 	else
