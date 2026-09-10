@@ -1523,6 +1523,7 @@ function Feature._createGUI()
 	-- FOV BUTTON:
 	-- SINGLE CLICK = FOV ON/OFF
 	-- DOUBLE CLICK = SHOW/HIDE SLIDER
+	-- DOUBLE CLICK DOES NOT CHANGE FOV STATE
 	-- ========================================
 
 	Feature._trackConnection(fovToggle.MouseButton1Click:Connect(function()
@@ -1533,10 +1534,26 @@ function Feature._createGUI()
 		if currentTime - Feature._lastFToggleClick <= Feature._config.DOUBLE_CLICK_TIME then
 			Feature._lastFToggleClick = 0
 			Feature._toggleFOVSlider()
-		else
-			Feature._lastFToggleClick = currentTime
-			Feature._setFOVVisible(not Feature._showFOV)
+			return
 		end
+
+		Feature._lastFToggleClick = currentTime
+
+		local generation = Feature._generation
+
+		local thread = task.delay(Feature._config.DOUBLE_CLICK_TIME, function()
+			if generation ~= Feature._generation
+				or not Feature._enabled then
+				return
+			end
+
+			if Feature._lastFToggleClick == currentTime then
+				Feature._lastFToggleClick = 0
+				Feature._setFOVVisible(not Feature._showFOV)
+			end
+		end)
+
+		Feature._trackTask(thread)
 	end))
 
 	-- ========================================
