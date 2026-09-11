@@ -3,11 +3,13 @@
 -- ============================================
 
 local HttpService = game:GetService("HttpService")
+local MarketplaceService = game:GetService("MarketplaceService")
 
 local SaveManager = {
 	NAME = "Save Manager",
 
-	File = "FeatureManager.json",
+	Folder = "GAME CONFIGS",
+	File = nil,
 
 	Features = {},
 
@@ -55,6 +57,16 @@ local isfileFunction =
 	and clonefunction(isfile)
 	or nil
 
+local makefolderFunction =
+	type(makefolder) == "function"
+	and clonefunction(makefolder)
+	or nil
+
+local isfolderFunction =
+	type(isfolder) == "function"
+	and clonefunction(isfolder)
+	or nil
+
 -- ============================================
 -- Helpers
 -- ============================================
@@ -64,6 +76,102 @@ local function canUseFileSystem()
 		type(writefileFunction) == "function"
 		and type(readfileFunction) == "function"
 		and type(isfileFunction) == "function"
+end
+
+local function safeIsFolder(path)
+	if type(isfolderFunction) ~= "function" then
+		return false
+	end
+
+	local success, result = pcall(function()
+		return isfolderFunction(path)
+	end)
+
+	return success and result == true
+end
+
+local function safeMakeFolder(path)
+	if type(makefolderFunction) ~= "function" then
+		return false
+	end
+
+	local success = pcall(function()
+		makefolderFunction(path)
+	end)
+
+	return success
+end
+
+local function ensureFolder()
+	if not canUseFileSystem() then
+		return false
+	end
+
+	if safeIsFolder(SaveManager.Folder) then
+		return true
+	end
+
+	local success = safeMakeFolder(SaveManager.Folder)
+
+	if success then
+		return safeIsFolder(SaveManager.Folder)
+	end
+
+	return false
+end
+
+-- ============================================
+-- Game Name
+-- ============================================
+
+local function getGameName()
+	local success, info = pcall(function()
+		return MarketplaceService:GetProductInfo(game.PlaceId)
+	end)
+
+	if success and type(info) == "table" and type(info.Name) == "string" then
+		if info.Name ~= "" then
+			return info.Name
+		end
+	end
+
+	return tostring(game.PlaceId)
+end
+
+-- ============================================
+-- File Name Sanitization
+-- ============================================
+
+local function sanitizeFileName(name)
+	if type(name) ~= "string" or name == "" then
+		return tostring(game.PlaceId)
+	end
+
+	-- Remove characters that are invalid in Windows/executor file paths.
+	name = name:gsub("[<>:\"/\\|%?%*]", "")
+
+	-- Remove control characters.
+	name = name:gsub("[%c]", "")
+
+	-- Trim leading/trailing spaces and periods.
+	name = name:gsub("^%s+", "")
+	name = name:gsub("%s+$", "")
+	name = name:gsub("^%.+", "")
+	name = name:gsub("%.+$", "")
+
+	-- Prevent an empty filename after sanitization.
+	if name == "" then
+		name = tostring(game.PlaceId)
+	end
+
+	return name
+end
+
+local function getGameFile()
+	local gameName = getGameName()
+	gameName = sanitizeFileName(gameName)
+
+	return SaveManager.Folder .. "/" .. gameName .. ".json"
 end
 
 local function safeIsFile(path)
@@ -179,6 +287,12 @@ end
 -- ============================================
 
 function SaveManager:DoesConfigExist()
+	self.File = getGameFile()
+
+	if not ensureFolder() then
+		return false
+	end
+
 	return safeIsFile(self.File)
 end
 
@@ -286,6 +400,25 @@ function SaveManager:Save()
 		return false
 	end
 
+	-- ----------------------------------------
+	-- Make sure GAME CONFIGS exists
+	-- ----------------------------------------
+
+	if not ensureFolder() then
+		warn("[Save Manager] Failed to create GAME CONFIGS folder.")
+		return false
+	end
+
+	-- ----------------------------------------
+	-- Get current game's config file
+	-- ----------------------------------------
+
+	self.File = getGameFile()
+
+	-- ----------------------------------------
+	-- Build save data dynamically
+	-- ----------------------------------------
+
 	local data = self:_buildSaveData()
 	local encoded = encode(data)
 
@@ -311,6 +444,28 @@ end
 -- ============================================
 
 function SaveManager:Load()
+	if not canUseFileSystem() then
+		return false, nil
+	end
+
+	-- ----------------------------------------
+	-- Make sure GAME CONFIGS exists
+	-- ----------------------------------------
+
+	if not ensureFolder() then
+		return false, nil
+	end
+
+	-- ----------------------------------------
+	-- Get current game's config file
+	-- ----------------------------------------
+
+	self.File = getGameFile()
+
+	-- ----------------------------------------
+	-- Check current game's config
+	-- ----------------------------------------
+
 	if not safeIsFile(self.File) then
 		return false, nil
 	end
@@ -466,6 +621,8 @@ function SaveManager:cleanup()
 	self.CurrentThemeName = nil
 	self.SavedThemeName = nil
 	self.Loaded = false
+
+	self.File = nil
 end
 
 return SaveManager
