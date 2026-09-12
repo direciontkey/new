@@ -16,6 +16,9 @@ local SaveManager = {
 	Main = nil,
 	MiniButton = nil,
 
+	Popup = nil,
+	PopupFeatureIndex = nil,
+
 	CurrentThemeName = nil,
 	SavedThemeName = nil,
 
@@ -27,219 +30,170 @@ local SaveManager = {
 }
 
 -- ============================================
--- Executor Compatibility
+-- EXECUTOR WRAPPERS
 -- ============================================
 
-local cloneref = cloneref
-	or clonereference
-	or function(instance)
-		return instance
+local function getFunction(name)
+	local success, result = pcall(function()
+		return getgenv()[name]
+	end)
+
+	if success and type(result) == "function" then
+		return result
 	end
 
-local clonefunction = clonefunction
-	or copyfunction
-	or function(func)
-		return func
-	end
-
-local writefileFunction =
-	type(writefile) == "function"
-	and clonefunction(writefile)
-	or nil
-
-local readfileFunction =
-	type(readfile) == "function"
-	and clonefunction(readfile)
-	or nil
-
-local isfileFunction =
-	type(isfile) == "function"
-	and clonefunction(isfile)
-	or nil
-
-local makefolderFunction =
-	type(makefolder) == "function"
-	and clonefunction(makefolder)
-	or nil
-
-local isfolderFunction =
-	type(isfolder) == "function"
-	and clonefunction(isfolder)
-	or nil
-
--- ============================================
--- Helpers
--- ============================================
-
-local function canUseFileSystem()
-	return
-		type(writefileFunction) == "function"
-		and type(readfileFunction) == "function"
-		and type(isfileFunction) == "function"
+	return nil
 end
 
+local cloneref = getFunction("cloneref")
+local clonefunction = getFunction("clonefunction")
+
+local writefile = getFunction("writefile")
+local readfile = getFunction("readfile")
+local isfile = getFunction("isfile")
+local makefolder = getFunction("makefolder")
+local isfolder = getFunction("isfolder")
+
+if clonefunction then
+	writefile = writefile and clonefunction(writefile) or writefile
+	readfile = readfile and clonefunction(readfile) or readfile
+	isfile = isfile and clonefunction(isfile) or isfile
+	makefolder = makefolder and clonefunction(makefolder) or makefolder
+	isfolder = isfolder and clonefunction(isfolder) or isfolder
+end
+
+if cloneref then
+	HttpService = cloneref(HttpService)
+	MarketplaceService = cloneref(MarketplaceService)
+end
+
+-- ============================================
+-- FILESYSTEM HELPERS
+-- ============================================
+
 local function safeIsFolder(path)
-	if type(isfolderFunction) ~= "function" then
+	if type(isfolder) ~= "function" then
 		return false
 	end
 
-	local success, result = pcall(function()
-		return isfolderFunction(path)
-	end)
-
+	local success, result = pcall(isfolder, path)
 	return success and result == true
 end
 
 local function safeMakeFolder(path)
-	if type(makefolderFunction) ~= "function" then
+	if type(makefolder) ~= "function" then
 		return false
 	end
 
-	local success = pcall(function()
-		makefolderFunction(path)
-	end)
-
+	local success = pcall(makefolder, path)
 	return success
 end
 
-local function ensureFolder()
-	if not canUseFileSystem() then
+local function safeIsFile(path)
+	if type(isfile) ~= "function" then
 		return false
 	end
 
-	if safeIsFolder(SaveManager.Folder) then
-		return true
+	local success, result = pcall(isfile, path)
+	return success and result == true
+end
+
+local function safeReadFile(path)
+	if type(readfile) ~= "function" then
+		return nil
 	end
 
-	local success = safeMakeFolder(SaveManager.Folder)
+	local success, result = pcall(readfile, path)
 
-	if success then
-		return safeIsFolder(SaveManager.Folder)
+	if success and type(result) == "string" then
+		return result
 	end
 
-	return false
+	return nil
+end
+
+local function safeWriteFile(path, content)
+	if type(writefile) ~= "function" then
+		return false
+	end
+
+	local success = pcall(writefile, path, content)
+	return success
 end
 
 -- ============================================
--- Game Name
+-- GAME NAME
 -- ============================================
 
 local function getGameName()
-	local success, info = pcall(function()
-		return MarketplaceService:GetProductInfo(game.PlaceId)
+	local success, result = pcall(function()
+		return MarketplaceService:GetProductInfo(game.PlaceId).Name
 	end)
 
-	if success and type(info) == "table" and type(info.Name) == "string" then
-		if info.Name ~= "" then
-			return info.Name
-		end
+	if success and type(result) == "string" and result ~= "" then
+		return result
 	end
 
 	return tostring(game.PlaceId)
 end
 
 -- ============================================
--- File Name Sanitization
+-- SANITIZE GAME NAME
 -- ============================================
 
-local function sanitizeFileName(name)
-	if type(name) ~= "string" or name == "" then
-		return tostring(game.PlaceId)
-	end
+local function sanitizeName(name)
+	name = tostring(name or "")
 
-	-- Remove characters that are invalid in Windows/executor file paths.
-	name = name:gsub("[<>:\"/\\|%?%*]", "")
+	name = name:gsub("[<>:\"/\\|%?%*]", "_")
+	name = name:gsub("[%c]", "_")
 
-	-- Remove control characters.
-	name = name:gsub("[%c]", "")
-
-	-- Trim leading/trailing spaces and periods.
-	name = name:gsub("^%s+", "")
-	name = name:gsub("%s+$", "")
-	name = name:gsub("^%.+", "")
-	name = name:gsub("%.+$", "")
-
-	-- Prevent an empty filename after sanitization.
 	if name == "" then
-		name = tostring(game.PlaceId)
+		name = "Unknown Game"
 	end
 
 	return name
 end
 
-local function getGameFile()
-	local gameName = getGameName()
-	gameName = sanitizeFileName(gameName)
+-- ============================================
+-- JSON HELPERS
+-- ============================================
 
-	return SaveManager.Folder .. "/" .. gameName .. ".json"
-end
-
-local function safeIsFile(path)
-	if not canUseFileSystem() then
-		return false
-	end
-
-	local success, result = pcall(function()
-		return isfileFunction(path)
-	end)
-
-	return success and result == true
-end
-
-local function safeReadFile(path)
-	if not canUseFileSystem() then
-		return nil
-	end
-
-	local success, result = pcall(function()
-		return readfileFunction(path)
-	end)
-
-	if not success then
-		return nil
-	end
-
-	return result
-end
-
-local function safeWriteFile(path, data)
-	if not canUseFileSystem() then
-		return false
-	end
-
-	local success = pcall(function()
-		writefileFunction(path, data)
-	end)
-
-	return success
-end
-
-local function encode(data)
+local function encodeJSON(data)
 	local success, result = pcall(function()
 		return HttpService:JSONEncode(data)
 	end)
 
-	if not success then
-		return nil
+	if success then
+		return result
 	end
 
-	return result
+	return nil
 end
 
-local function decode(data)
+local function decodeJSON(data)
 	local success, result = pcall(function()
 		return HttpService:JSONDecode(data)
 	end)
 
-	if not success or type(result) ~= "table" then
-		return nil
+	if success and type(result) == "table" then
+		return result
 	end
 
-	return result
+	return nil
 end
 
 -- ============================================
--- Feature State
+-- PATH
+-- ============================================
+
+function SaveManager:GetPath()
+	local gameName = sanitizeName(getGameName())
+
+	return self.Folder .. "/" .. gameName .. ".json"
+end
+
+-- ============================================
+-- FEATURES
 -- ============================================
 
 function SaveManager:SetFeatures(features)
@@ -252,7 +206,7 @@ function SaveManager:SetFeatures(features)
 end
 
 -- ============================================
--- Window References
+-- WINDOW REFERENCES
 -- ============================================
 
 function SaveManager:SetWindow(main, miniButton)
@@ -261,7 +215,23 @@ function SaveManager:SetWindow(main, miniButton)
 end
 
 -- ============================================
--- Theme
+-- POPUP REFERENCE
+-- ============================================
+
+function SaveManager:SetPopup(popupFrame, featureIndex)
+	self.Popup = popupFrame
+	self.PopupFeatureIndex = featureIndex
+
+	return true
+end
+
+function SaveManager:ClearPopup()
+	self.Popup = nil
+	self.PopupFeatureIndex = nil
+end
+
+-- ============================================
+-- THEME
 -- ============================================
 
 function SaveManager:SetTheme(themeName)
@@ -283,21 +253,7 @@ function SaveManager:GetSavedTheme()
 end
 
 -- ============================================
--- Config Existence
--- ============================================
-
-function SaveManager:DoesConfigExist()
-	self.File = getGameFile()
-
-	if not ensureFolder() then
-		return false
-	end
-
-	return safeIsFile(self.File)
-end
-
--- ============================================
--- Build Save Data
+-- BUILD SAVE DATA
 -- ============================================
 
 function SaveManager:_buildSaveData()
@@ -305,61 +261,52 @@ function SaveManager:_buildSaveData()
 		theme = self.CurrentThemeName,
 		objects = {},
 		window = {},
+		popup = {
+			active = false,
+			featureIndex = nil,
+			position = nil,
+		},
 	}
 
-	-- ----------------------------------------
-	-- Feature states
-	-- ----------------------------------------
+	-- ============================================
+	-- FEATURE STATES
+	-- ============================================
 
-	if type(self.Features) == "table" then
-		for index, feature in pairs(self.Features) do
-			if type(feature) == "table" then
-				local enabled = false
+	for featureIndex, feature in pairs(self.Features) do
+		if type(feature) == "table" and type(feature.isEnabled) == "function" then
+			local success, enabled = pcall(function()
+				return feature:isEnabled()
+			end)
 
-				if type(feature.isEnabled) == "function" then
-					local success, result = pcall(function()
-						return feature:isEnabled()
-					end)
-
-					if success then
-						enabled = result == true
-					end
-				end
-
-				local key
-
-				if type(index) == "number" then
-					key = tostring(index)
-				elseif type(index) == "string" then
-					key = index
-				end
-
-				if key then
-					data.objects[key] = enabled
-				end
-			elseif type(index) == "string" then
-				data.objects[index] = feature == true
+			if success then
+				data.objects[tostring(featureIndex)] = enabled == true
 			end
 		end
 	end
 
-	-- ----------------------------------------
-	-- Main window
-	-- ----------------------------------------
+	-- ============================================
+	-- MAIN WINDOW POSITION / SIZE
+	-- ============================================
 
-	if self.Main then
-		local success, position, size = pcall(function()
-			return self.Main.Position, self.Main.Size
+	if self.Main and self.Main.Parent then
+		local positionSuccess, position = pcall(function()
+			return self.Main.Position
 		end)
 
-		if success then
+		if positionSuccess and position then
 			data.window.position = {
 				scaleX = position.X.Scale,
 				offsetX = position.X.Offset,
 				scaleY = position.Y.Scale,
 				offsetY = position.Y.Offset,
 			}
+		end
 
+		local sizeSuccess, size = pcall(function()
+			return self.Main.Size
+		end)
+
+		if sizeSuccess and size then
 			data.window.size = {
 				scaleX = size.X.Scale,
 				offsetX = size.X.Offset,
@@ -369,17 +316,39 @@ function SaveManager:_buildSaveData()
 		end
 	end
 
-	-- ----------------------------------------
-	-- Mini button
-	-- ----------------------------------------
+	-- ============================================
+	-- MINI BUTTON POSITION
+	-- ============================================
 
-	if self.MiniButton then
+	if self.MiniButton and self.MiniButton.Parent then
 		local success, position = pcall(function()
 			return self.MiniButton.Position
 		end)
 
-		if success then
+		if success and position then
 			data.window.miniPosition = {
+				scaleX = position.X.Scale,
+				offsetX = position.X.Offset,
+				scaleY = position.Y.Scale,
+				offsetY = position.Y.Offset,
+			}
+		end
+	end
+
+	-- ============================================
+	-- POPUP STATE / POSITION
+	-- ============================================
+
+	if self.Popup and self.Popup.Parent then
+		local success, position = pcall(function()
+			return self.Popup.Position
+		end)
+
+		if success and position then
+			data.popup.active = true
+			data.popup.featureIndex = self.PopupFeatureIndex
+
+			data.popup.position = {
 				scaleX = position.X.Scale,
 				offsetX = position.X.Offset,
 				scaleY = position.Y.Scale,
@@ -392,45 +361,24 @@ function SaveManager:_buildSaveData()
 end
 
 -- ============================================
--- Save
+-- SAVE
 -- ============================================
 
 function SaveManager:Save()
-	if not canUseFileSystem() then
-		return false
+	if not safeIsFolder(self.Folder) then
+		safeMakeFolder(self.Folder)
 	end
-
-	-- ----------------------------------------
-	-- Make sure GAME CONFIGS exists
-	-- ----------------------------------------
-
-	if not ensureFolder() then
-		warn("[Save Manager] Failed to create GAME CONFIGS folder.")
-		return false
-	end
-
-	-- ----------------------------------------
-	-- Get current game's config file
-	-- ----------------------------------------
-
-	self.File = getGameFile()
-
-	-- ----------------------------------------
-	-- Build save data dynamically
-	-- ----------------------------------------
 
 	local data = self:_buildSaveData()
-	local encoded = encode(data)
+	local encoded = encodeJSON(data)
 
 	if not encoded then
-		warn("[Save Manager] Failed to encode save data.")
 		return false
 	end
 
-	local success = safeWriteFile(self.File, encoded)
+	local path = self:GetPath()
 
-	if not success then
-		warn("[Save Manager] Failed to write save file.")
+	if not safeWriteFile(path, encoded) then
 		return false
 	end
 
@@ -440,134 +388,128 @@ function SaveManager:Save()
 end
 
 -- ============================================
--- Load
+-- LOAD
 -- ============================================
 
 function SaveManager:Load()
-	if not canUseFileSystem() then
+	if not safeIsFile(self:GetPath()) then
 		return false, nil
 	end
 
-	-- ----------------------------------------
-	-- Make sure GAME CONFIGS exists
-	-- ----------------------------------------
+	local content = safeReadFile(self:GetPath())
 
-	if not ensureFolder() then
+	if not content then
 		return false, nil
 	end
 
-	-- ----------------------------------------
-	-- Get current game's config file
-	-- ----------------------------------------
+	local data = decodeJSON(content)
 
-	self.File = getGameFile()
-
-	-- ----------------------------------------
-	-- Check current game's config
-	-- ----------------------------------------
-
-	if not safeIsFile(self.File) then
+	if type(data) ~= "table" then
 		return false, nil
 	end
 
-	local contents = safeReadFile(self.File)
-
-	if not contents then
-		return false, nil
-	end
-
-	local data = decode(contents)
-
-	if not data then
-		warn("[Save Manager] Failed to decode save file.")
-		return false, nil
-	end
-
-	self.Loaded = true
-
-	-- ----------------------------------------
-	-- Saved theme
-	-- ----------------------------------------
+	-- ============================================
+	-- THEME
+	-- ============================================
 
 	if type(data.theme) == "string" then
 		self.SavedThemeName = data.theme
+		self.CurrentThemeName = data.theme
 	end
 
-	-- ----------------------------------------
-	-- Window
-	-- ----------------------------------------
+	-- ============================================
+	-- MAIN WINDOW POSITION
+	-- ============================================
 
-	if type(data.window) == "table" then
-		local window = data.window
+	if self.Main and self.Main.Parent then
+		local position = data.window and data.window.position
 
-		if self.Main then
-			if type(window.position) == "table" then
-				local p = window.position
-
-				if
-					type(p.scaleX) == "number"
-					and type(p.offsetX) == "number"
-					and type(p.scaleY) == "number"
-					and type(p.offsetY) == "number"
-				then
-					pcall(function()
-						self.Main.Position = UDim2.new(
-							p.scaleX,
-							p.offsetX,
-							p.scaleY,
-							p.offsetY
-						)
-					end)
-				end
-			end
-
-			if type(window.size) == "table" then
-				local s = window.size
-
-				if
-					type(s.scaleX) == "number"
-					and type(s.offsetX) == "number"
-					and type(s.scaleY) == "number"
-					and type(s.offsetY) == "number"
-				then
-					pcall(function()
-						self.Main.Size = UDim2.new(
-							s.scaleX,
-							s.offsetX,
-							s.scaleY,
-							s.offsetY
-						)
-					end)
-				end
-			end
+		if type(position) == "table"
+			and type(position.scaleX) == "number"
+			and type(position.offsetX) == "number"
+			and type(position.scaleY) == "number"
+			and type(position.offsetY) == "number"
+		then
+			pcall(function()
+				self.Main.Position = UDim2.new(
+					position.scaleX,
+					position.offsetX,
+					position.scaleY,
+					position.offsetY
+				)
+			end)
 		end
 
-		if self.MiniButton and type(window.miniPosition) == "table" then
-			local p = window.miniPosition
+		-- ============================================
+		-- MAIN WINDOW SIZE
+		-- ============================================
 
-			if
-				type(p.scaleX) == "number"
-				and type(p.offsetX) == "number"
-				and type(p.scaleY) == "number"
-				and type(p.offsetY) == "number"
-			then
-				pcall(function()
-					self.MiniButton.Position = UDim2.new(
-						p.scaleX,
-						p.offsetX,
-						p.scaleY,
-						p.offsetY
-					)
-				end)
-			end
+		local size = data.window and data.window.size
+
+		if type(size) == "table"
+			and type(size.scaleX) == "number"
+			and type(size.offsetX) == "number"
+			and type(size.scaleY) == "number"
+			and type(size.offsetY) == "number"
+		then
+			pcall(function()
+				self.Main.Size = UDim2.new(
+					size.scaleX,
+					size.offsetX,
+					size.scaleY,
+					size.offsetY
+				)
+			end)
 		end
 	end
+
+	-- ============================================
+	-- MINI BUTTON POSITION
+	-- ============================================
+
+	if self.MiniButton and self.MiniButton.Parent then
+		local miniPosition = data.window and data.window.miniPosition
+
+		if type(miniPosition) == "table"
+			and type(miniPosition.scaleX) == "number"
+			and type(miniPosition.offsetX) == "number"
+			and type(miniPosition.scaleY) == "number"
+			and type(miniPosition.offsetY) == "number"
+		then
+			pcall(function()
+				self.MiniButton.Position = UDim2.new(
+					miniPosition.scaleX,
+					miniPosition.offsetX,
+					miniPosition.scaleY,
+					miniPosition.offsetY
+				)
+			end)
+		end
+	end
+
+	-- ============================================
+	-- POPUP DATA
+	-- ============================================
+
+	if type(data.popup) == "table" then
+		if data.popup.active == true
+			and type(data.popup.featureIndex) == "number"
+		then
+			-- Store the saved popup information so Feature Manager
+			-- can recreate the popup after all UI objects exist.
+			self.PopupFeatureIndex = data.popup.featureIndex
+		else
+			self.PopupFeatureIndex = nil
+		end
+	end
+
+	self.Loaded = true
 
 	return true, data
 end
 
 -- ============================================
--- Autoload
+-- AUTOLOAD CONFIG
 -- ============================================
 
 function SaveManager:LoadAutoloadConfig()
@@ -575,54 +517,37 @@ function SaveManager:LoadAutoloadConfig()
 end
 
 -- ============================================
--- Lifecycle Compatibility
+-- CLEANUP
 -- ============================================
 
-function SaveManager:enable()
-	return true
-end
-
-function SaveManager:disable()
-	return true
-end
-
-function SaveManager:isEnabled()
-	return true
-end
-
-function SaveManager:cleanup()
+function SaveManager:Cleanup()
 	for _, connection in pairs(self._connections) do
-		if connection then
-			pcall(function()
-				connection:Disconnect()
-			end)
-		end
+		pcall(function()
+			connection:Disconnect()
+		end)
 	end
-
-	table.clear(self._connections)
 
 	for _, instance in pairs(self._instances) do
-		if instance then
-			pcall(function()
-				instance:Destroy()
-			end)
-		end
+		pcall(function()
+			instance:Destroy()
+		end)
 	end
 
-	table.clear(self._instances)
+	for _, taskObject in pairs(self._tasks) do
+		pcall(function()
+			task.cancel(taskObject)
+		end)
+	end
 
-	table.clear(self._tasks)
+	self._connections = {}
+	self._instances = {}
+	self._tasks = {}
 
-	self.Features = {}
+	self.Popup = nil
+	self.PopupFeatureIndex = nil
 
 	self.Main = nil
 	self.MiniButton = nil
-
-	self.CurrentThemeName = nil
-	self.SavedThemeName = nil
-	self.Loaded = false
-
-	self.File = nil
 end
 
 return SaveManager
