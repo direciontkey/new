@@ -7,7 +7,8 @@ local HttpService = game:GetService("HttpService")
 local SaveManager = {
 	NAME = "Save Manager",
 
-	File = "FeatureManager.json",
+	Folder = "GAME CONFIG",
+	File = nil,
 
 	Features = {},
 
@@ -55,6 +56,56 @@ local isfileFunction =
 	and clonefunction(isfile)
 	or nil
 
+local makefolderFunction =
+	type(makefolder) == "function"
+	and clonefunction(makefolder)
+	or nil
+
+local isfolderFunction =
+	type(isfolder) == "function"
+	and clonefunction(isfolder)
+	or nil
+
+-- ============================================
+-- File Name
+-- ============================================
+
+local function sanitizeFileName(name)
+	if type(name) ~= "string" or name == "" then
+		return "Unknown Game"
+	end
+
+	-- Replace characters that are invalid in file names
+	name = name:gsub("[<>:\"/\\|%?%*]", "_")
+
+	-- Remove trailing spaces/dots
+	name = name:gsub("[%.%s]+$", "")
+
+	if name == "" then
+		name = "Unknown Game"
+	end
+
+	return name
+end
+
+local function getGameFile()
+	local gameName
+
+	local success, result = pcall(function()
+		return game.Name
+	end)
+
+	if success and type(result) == "string" and result ~= "" then
+		gameName = result
+	else
+		gameName = "Unknown Game"
+	end
+
+	return SaveManager.Folder .. "/" .. sanitizeFileName(gameName) .. ".json"
+end
+
+SaveManager.File = getGameFile()
+
 -- ============================================
 -- Helpers
 -- ============================================
@@ -64,6 +115,34 @@ local function canUseFileSystem()
 		type(writefileFunction) == "function"
 		and type(readfileFunction) == "function"
 		and type(isfileFunction) == "function"
+end
+
+local function ensureFolder()
+	if type(makefolderFunction) ~= "function" then
+		return false
+	end
+
+	if type(isfolderFunction) == "function" then
+		local success, exists = pcall(function()
+			return isfolderFunction(SaveManager.Folder)
+		end)
+
+		if success and exists then
+			return true
+		end
+	end
+
+	local success = pcall(function()
+		makefolderFunction(SaveManager.Folder)
+	end)
+
+	if success then
+		return true
+	end
+
+	-- Some executors may not provide isfolder reliably.
+	-- Verify by attempting to use the folder path indirectly.
+	return false
 end
 
 local function safeIsFile(path)
@@ -283,6 +362,11 @@ end
 
 function SaveManager:Save()
 	if not canUseFileSystem() then
+		return false
+	end
+
+	if not ensureFolder() then
+		warn("[Save Manager] Failed to create config folder.")
 		return false
 	end
 
