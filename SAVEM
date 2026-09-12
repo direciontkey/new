@@ -3,6 +3,7 @@
 -- ============================================
 
 local HttpService = game:GetService("HttpService")
+local MarketplaceService = game:GetService("MarketplaceService")
 
 local SaveManager = {
 	NAME = "Save Manager",
@@ -89,16 +90,19 @@ local function sanitizeFileName(name)
 end
 
 local function getGameFile()
-	local gameName
+	local gameName = "Unknown Game"
 
-	local success, result = pcall(function()
-		return game.Name
+	local success, info = pcall(function()
+		return MarketplaceService:GetProductInfo(game.PlaceId)
 	end)
 
-	if success and type(result) == "string" and result ~= "" then
-		gameName = result
-	else
-		gameName = "Unknown Game"
+	if
+		success
+		and type(info) == "table"
+		and type(info.Name) == "string"
+		and info.Name ~= ""
+	then
+		gameName = info.Name
 	end
 
 	return SaveManager.Folder .. "/" .. sanitizeFileName(gameName) .. ".json"
@@ -140,8 +144,6 @@ local function ensureFolder()
 		return true
 	end
 
-	-- Some executors may not provide isfolder reliably.
-	-- Verify by attempting to use the folder path indirectly.
 	return false
 end
 
