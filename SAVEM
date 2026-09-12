@@ -425,6 +425,49 @@ function SaveManager:Load()
 	end
 
 	-- ----------------------------------------
+	-- Feature states
+	-- ----------------------------------------
+
+	if type(data.objects) == "table" and type(self.Features) == "table" then
+		for index, feature in pairs(self.Features) do
+			if type(feature) == "table" then
+				local key = tostring(index)
+				local savedState = data.objects[key]
+
+				if type(savedState) == "boolean" then
+					local currentState = false
+
+					if type(feature.isEnabled) == "function" then
+						local success, result = pcall(function()
+							return feature:isEnabled()
+						end)
+
+						if success then
+							currentState = result == true
+						end
+					end
+
+					if savedState ~= currentState then
+						if savedState then
+							if type(feature.enable) == "function" then
+								pcall(function()
+									feature:enable()
+								end)
+							end
+						else
+							if type(feature.disable) == "function" then
+								pcall(function()
+									feature:disable()
+								end)
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+
+	-- ----------------------------------------
 	-- Window
 	-- ----------------------------------------
 
