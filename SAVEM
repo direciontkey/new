@@ -218,15 +218,10 @@ end
 function SaveManager:SetFeatures(features)
 	if type(features) ~= "table" then
 		self.Features = {}
-	else
-		self.Features = features
+		return
 	end
 
-	-- Automatically update the config when the
-	-- feature list changes after the initial load.
-	if self.Loaded then
-		self:Save()
-	end
+	self.Features = features
 end
 
 -- ============================================
@@ -284,25 +279,33 @@ function SaveManager:_buildSaveData()
 	-- ----------------------------------------
 
 	if type(self.Features) == "table" then
-		for _, feature in pairs(self.Features) do
+		for index, feature in pairs(self.Features) do
 			if type(feature) == "table" then
-				local featureName = feature.NAME
+				local enabled = false
 
-				if type(featureName) == "string" and featureName ~= "" then
-					local enabled = false
+				if type(feature.isEnabled) == "function" then
+					local success, result = pcall(function()
+						return feature:isEnabled()
+					end)
 
-					if type(feature.isEnabled) == "function" then
-						local success, result = pcall(function()
-							return feature:isEnabled()
-						end)
-
-						if success then
-							enabled = result == true
-						end
+					if success then
+						enabled = result == true
 					end
-
-					data.objects[featureName] = enabled
 				end
+
+				local key
+
+				if type(index) == "number" then
+					key = tostring(index)
+				elseif type(index) == "string" then
+					key = index
+				end
+
+				if key then
+					data.objects[key] = enabled
+				end
+			elseif type(index) == "string" then
+				data.objects[index] = feature == true
 			end
 		end
 	end
