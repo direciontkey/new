@@ -35,6 +35,7 @@ local Feature = {
 	_aimbotRenderConnection = nil,
 	_freezeConnection = nil,
 	_lastFToggleClick = 0,
+	_pendingFOVState = nil,
 }
 
 -- ============================================
@@ -1521,9 +1522,9 @@ function Feature._createGUI()
 
 	-- ========================================
 	-- FOV BUTTON:
-	-- SINGLE CLICK = FOV ON/OFF
+	-- SINGLE CLICK = IMMEDIATE FOV ON/OFF
 	-- DOUBLE CLICK = SHOW/HIDE SLIDER
-	-- DOUBLE CLICK DOES NOT CHANGE FOV STATE
+	-- DOUBLE CLICK RESTORES ORIGINAL FOV STATE
 	-- ========================================
 
 	Feature._trackConnection(fovToggle.MouseButton1Click:Connect(function()
@@ -1533,13 +1534,26 @@ function Feature._createGUI()
 
 		if currentTime - Feature._lastFToggleClick <= Feature._config.DOUBLE_CLICK_TIME then
 			Feature._lastFToggleClick = 0
+
+			if Feature._pendingFOVState ~= nil then
+				Feature._setFOVVisible(Feature._pendingFOVState)
+				Feature._pendingFOVState = nil
+			end
+
 			Feature._toggleFOVSlider()
 			return
 		end
 
 		Feature._lastFToggleClick = currentTime
 
+		-- Save the original state so a second click can restore it.
+		Feature._pendingFOVState = Feature._showFOV
+
+		-- Apply the single-click action immediately.
+		Feature._setFOVVisible(not Feature._showFOV)
+
 		local generation = Feature._generation
+		local clickTime = currentTime
 
 		local thread = task.delay(Feature._config.DOUBLE_CLICK_TIME, function()
 			if generation ~= Feature._generation
@@ -1547,9 +1561,9 @@ function Feature._createGUI()
 				return
 			end
 
-			if Feature._lastFToggleClick == currentTime then
+			if Feature._lastFToggleClick == clickTime then
 				Feature._lastFToggleClick = 0
-				Feature._setFOVVisible(not Feature._showFOV)
+				Feature._pendingFOVState = nil
 			end
 		end)
 
@@ -1679,6 +1693,7 @@ function Feature.enable()
 	Feature._sliderDragging = false
 	Feature._lastFireTime = 0
 	Feature._lastFToggleClick = 0
+	Feature._pendingFOVState = nil
 	Feature._freezeConnection = nil
 
 	Feature._playerCharacters = {}
@@ -1717,6 +1732,7 @@ function Feature.cleanup()
 	Feature._sliderDragging = false
 	Feature._lastFireTime = 0
 	Feature._lastFToggleClick = 0
+	Feature._pendingFOVState = nil
 
 	-- ========================================
 	-- THAW CHARACTER
