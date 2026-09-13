@@ -1456,7 +1456,7 @@ function Feature._createGUI()
 
 	smoothToggle.BackgroundTransparency = 0.2
 	smoothToggle.BorderSizePixel = 0
-	smoothToggle.Text = "F"
+	smoothToggle.Text = "A"
 	smoothToggle.TextColor3 = Color3.fromRGB(255, 255, 255)
 	smoothToggle.TextSize = 10
 	smoothToggle.Font = Enum.Font.GothamBold
