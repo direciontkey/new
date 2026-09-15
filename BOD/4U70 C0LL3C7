@@ -1,0 +1,397 @@
+-- ============================================
+-- AUTO-COLLECT
+-- ============================================
+
+local Feature = {
+	NAME = "Auto-Collect",
+	_players = game:GetService("Players"),
+	_userInputService = game:GetService("UserInputService"),
+	_replicatedStorage = game:GetService("ReplicatedStorage"),
+	_workspace = game:GetService("Workspace"),
+	_collectionService = game:GetService("CollectionService"),
+	_enabled = false,
+	_isCollecting = false,
+	_generation = 0,
+	_connections = {},
+	_instances = {},
+	_tasks = {},
+	_player = nil,
+	_inventory = nil,
+	_interactables = nil,
+	_gui = nil,
+	_mainFrame = nil,
+	_toggleButton = nil,
+	_btnOutline = nil,
+	_mainOutline = nil,
+}
+
+-- ============================================
+-- CONFIG
+-- ============================================
+
+Feature._config = {
+	COLLECT_SPEED = 0.03,
+	COLLECT_RANGE = 15,
+	TOGGLE_KEY = Enum.KeyCode.F,
+}
+
+-- ============================================
+-- TRACKING HELPERS
+-- ============================================
+
+function Feature._safeDisconnect(connection)
+	if connection then
+		pcall(function()
+			connection:Disconnect()
+		end)
+	end
+end
+
+function Feature._safeCancel(taskHandle)
+	if taskHandle then
+		pcall(function()
+			task.cancel(taskHandle)
+		end)
+	end
+end
+
+function Feature._safeDestroy(instance)
+	if instance then
+		pcall(function()
+			instance:Destroy()
+		end)
+	end
+end
+
+function Feature._trackConnection(connection)
+	if connection then
+		table.insert(Feature._connections, connection)
+	end
+	return connection
+end
+
+function Feature._trackInstance(instance)
+	if instance then
+		table.insert(Feature._instances, instance)
+	end
+	return instance
+end
+
+function Feature._trackTask(taskHandle)
+	if taskHandle then
+		table.insert(Feature._tasks, taskHandle)
+	end
+	return taskHandle
+end
+
+-- ============================================
+-- COLLECTION LOGIC
+-- ============================================
+
+function Feature._collectNearby(generation)
+	if generation ~= Feature._generation or not Feature._enabled or not Feature._isCollecting then
+		return 0
+	end
+
+	local character = Feature._player.Character
+
+	if not character or not character.PrimaryPart then
+		return 0
+	end
+
+	local position = character.PrimaryPart.Position
+	local collected = 0
+
+	for _, obj in ipairs(Feature._workspace:GetDescendants()) do
+		if generation ~= Feature._generation or not Feature._enabled or not Feature._isCollecting then
+			break
+		end
+
+		if obj:IsA("Model") and obj:HasTag("InteractablePhysicsObject") then
+			local objectPosition = obj.PrimaryPart and obj.PrimaryPart.Position
+
+			if objectPosition then
+				local distance = (objectPosition - position).Magnitude
+
+				if distance < Feature._config.COLLECT_RANGE then
+					local success, data = pcall(function()
+						return Feature._interactables.getObjectByModel(obj)
+					end)
+
+					if success and data then
+						pcall(function()
+							Feature._inventory.pickupObject(data.uuid)
+							collected += 1
+						end)
+
+						task.wait(0.005)
+					end
+				end
+			end
+		end
+	end
+
+	return collected
+end
+
+function Feature._startCollecting()
+	if Feature._isCollecting then
+		return
+	end
+
+	Feature._isCollecting = true
+	Feature._updateButton()
+
+	local generation = Feature._generation
+
+	local thread = task.spawn(function()
+		while generation == Feature._generation and Feature._enabled and Feature._isCollecting do
+			Feature._collectNearby(generation)
+			task.wait(Feature._config.COLLECT_SPEED)
+		end
+	end)
+
+	Feature._trackTask(thread)
+end
+
+function Feature._stopCollecting()
+	Feature._isCollecting = false
+	Feature._updateButton()
+end
+
+-- ============================================
+-- GUI
+-- ============================================
+
+function Feature._updateButton()
+	if not Feature._toggleButton or not Feature._btnOutline or not Feature._mainOutline then
+		return
+	end
+
+	if Feature._isCollecting then
+		Feature._toggleButton.Text = "OFF"
+		Feature._toggleButton.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+		Feature._btnOutline.Color = Color3.fromRGB(255, 100, 100)
+		Feature._btnOutline.Transparency = 0.3
+		Feature._mainOutline.Color = Color3.fromRGB(255, 100, 100)
+		Feature._mainOutline.Transparency = 0.3
+	else
+		Feature._toggleButton.Text = "ON"
+		Feature._toggleButton.BackgroundColor3 = Color3.fromRGB(0, 200, 80)
+		Feature._btnOutline.Color = Color3.fromRGB(255, 255, 255)
+		Feature._btnOutline.Transparency = 0.5
+		Feature._mainOutline.Color = Color3.fromRGB(255, 255, 255)
+		Feature._mainOutline.Transparency = 0.4
+	end
+end
+
+function Feature._toggleCollect()
+	if not Feature._enabled then
+		return
+	end
+
+	if Feature._isCollecting then
+		Feature._stopCollecting()
+	else
+		Feature._startCollecting()
+	end
+end
+
+function Feature._createGUI()
+	local playerGui = Feature._player:WaitForChild("PlayerGui")
+
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "AutoCollectGUI"
+	gui.Parent = playerGui
+	gui.IgnoreGuiInset = true
+	Feature._trackInstance(gui)
+	Feature._gui = gui
+
+	local mainFrame = Instance.new("Frame")
+	mainFrame.Name = "MainFrame"
+	mainFrame.Parent = gui
+	mainFrame.Position = UDim2.new(0.5, 261, 0.5, 56)
+	mainFrame.Size = UDim2.new(0, 46, 0, 46)
+	mainFrame.AnchorPoint = Vector2.new(0, 0)
+	mainFrame.BackgroundColor3 = Color3.fromRGB(50, 50, 70)
+	mainFrame.BackgroundTransparency = 0.5
+	mainFrame.BorderSizePixel = 0
+	Feature._trackInstance(mainFrame)
+	Feature._mainFrame = mainFrame
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 8)
+	corner.Parent = mainFrame
+	Feature._trackInstance(corner)
+
+	local mainOutline = Instance.new("UIStroke")
+	mainOutline.Name = "MainOutline"
+	mainOutline.Color = Color3.fromRGB(255, 255, 255)
+	mainOutline.Thickness = 1
+	mainOutline.Transparency = 0.4
+	mainOutline.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	mainOutline.Parent = mainFrame
+	Feature._trackInstance(mainOutline)
+	Feature._mainOutline = mainOutline
+
+	local toggleButton = Instance.new("TextButton")
+	toggleButton.Name = "ToggleButton"
+	toggleButton.Size = UDim2.new(0, 34, 0, 34)
+	toggleButton.Position = UDim2.new(0, 6, 0, 6)
+	toggleButton.BackgroundColor3 = Color3.fromRGB(0, 200, 80)
+	toggleButton.BackgroundTransparency = 0.3
+	toggleButton.BorderSizePixel = 0
+	toggleButton.Text = "ON"
+	toggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+	toggleButton.TextSize = 16
+	toggleButton.FontFace = Font.new("rbxasset://fonts/families/SourceSansPro.json", Enum.FontWeight.Bold)
+	toggleButton.Parent = mainFrame
+	Feature._trackInstance(toggleButton)
+	Feature._toggleButton = toggleButton
+
+	local btnCorner = Instance.new("UICorner")
+	btnCorner.CornerRadius = UDim.new(0, 4)
+	btnCorner.Parent = toggleButton
+	Feature._trackInstance(btnCorner)
+
+	local btnOutline = Instance.new("UIStroke")
+	btnOutline.Name = "ButtonOutline"
+	btnOutline.Color = Color3.fromRGB(255, 255, 255)
+	btnOutline.Thickness = 1
+	btnOutline.Transparency = 0.5
+	btnOutline.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	btnOutline.Parent = toggleButton
+	Feature._trackInstance(btnOutline)
+	Feature._btnOutline = btnOutline
+
+	local collectLabel = Instance.new("TextLabel")
+	collectLabel.Name = "CollectLabel"
+	collectLabel.Size = UDim2.new(1, 0, 0, 15)
+	collectLabel.Position = UDim2.new(0, 0, 1, 2)
+	collectLabel.BackgroundTransparency = 1
+	collectLabel.Text = "collect"
+	collectLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+	collectLabel.TextSize = 10
+	collectLabel.Font = Enum.Font.Gotham
+	collectLabel.TextXAlignment = Enum.TextXAlignment.Center
+	collectLabel.Parent = mainFrame
+	Feature._trackInstance(collectLabel)
+
+	Feature._trackConnection(toggleButton.MouseButton1Click:Connect(function()
+		if not Feature._enabled then
+			return
+		end
+
+		Feature._toggleCollect()
+	end))
+
+	Feature._updateButton()
+end
+
+-- ============================================
+-- ENABLE
+-- ============================================
+
+function Feature.enable()
+	Feature.cleanup()
+
+	Feature._generation += 1
+	Feature._enabled = true
+	Feature._isCollecting = false
+	Feature._player = Feature._players.LocalPlayer
+
+	if not Feature._player then
+		Feature._enabled = false
+		Feature.cleanup()
+		return
+	end
+
+	local inventoryModule = Feature._replicatedStorage
+		:WaitForChild("Client")
+		:WaitForChild("Systems")
+		:WaitForChild("Inventory")
+
+	local interactablesModule = Feature._replicatedStorage
+		:WaitForChild("Client")
+		:WaitForChild("Systems")
+		:WaitForChild("Interactables")
+
+	local inventorySuccess, inventory = pcall(require, inventoryModule)
+	local interactablesSuccess, interactables = pcall(require, interactablesModule)
+
+	if not inventorySuccess or not interactablesSuccess then
+		Feature._enabled = false
+		Feature.cleanup()
+		return
+	end
+
+	Feature._inventory = inventory
+	Feature._interactables = interactables
+
+	Feature._createGUI()
+
+	Feature._trackConnection(Feature._userInputService.InputBegan:Connect(function(input, gameProcessed)
+		if not Feature._enabled or gameProcessed then
+			return
+		end
+
+		if input.KeyCode == Feature._config.TOGGLE_KEY then
+			Feature._toggleCollect()
+		end
+	end))
+end
+
+-- ============================================
+-- DISABLE
+-- ============================================
+
+function Feature.disable()
+	Feature._enabled = false
+	Feature._isCollecting = false
+	Feature.cleanup()
+end
+
+-- ============================================
+-- IS ENABLED
+-- ============================================
+
+function Feature.isEnabled()
+	return Feature._enabled
+end
+
+-- ============================================
+-- CLEANUP
+-- ============================================
+
+function Feature.cleanup()
+	Feature._enabled = false
+	Feature._isCollecting = false
+	Feature._generation += 1
+
+	for _, connection in ipairs(Feature._connections) do
+		Feature._safeDisconnect(connection)
+	end
+
+	for _, taskHandle in ipairs(Feature._tasks) do
+		Feature._safeCancel(taskHandle)
+	end
+
+	for _, instance in ipairs(Feature._instances) do
+		Feature._safeDestroy(instance)
+	end
+
+	table.clear(Feature._connections)
+	table.clear(Feature._instances)
+	table.clear(Feature._tasks)
+
+	Feature._player = nil
+	Feature._inventory = nil
+	Feature._interactables = nil
+	Feature._gui = nil
+	Feature._mainFrame = nil
+	Feature._toggleButton = nil
+	Feature._btnOutline = nil
+	Feature._mainOutline = nil
+end
+
+return Feature
