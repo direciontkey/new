@@ -1,0 +1,478 @@
+-- ============================================
+-- GUN MOD
+-- ============================================
+
+local Feature = {
+	NAME = "Gun Mod",
+	_players = game:GetService("Players"),
+	_replicatedStorage = game:GetService("ReplicatedStorage"),
+	_runService = game:GetService("RunService"),
+	_userInputService = game:GetService("UserInputService"),
+	_contextActionService = game:GetService("ContextActionService"),
+	_enabled = false,
+	_applied = false,
+	_generation = 0,
+	_connections = {},
+	_instances = {},
+	_tasks = {},
+	_gunController = nil,
+	_cameraModule = nil,
+	_objectsLibrary = nil,
+	_originalNew = nil,
+	_originalRecoil = nil,
+	_original = {
+		KB = {},
+		FR = {},
+		RD = {},
+		SP = {},
+		DMG = {},
+	},
+}
+
+-- ============================================
+-- CONFIG
+-- ============================================
+
+Feature._config = {
+	fireRate = 0.02,
+	damage = 500,
+	zeroRecoil = true,
+	zeroSpread = true,
+	zeroReload = true,
+	bulletPenetration = 16,
+	patchLibrary = true,
+}
+
+-- ============================================
+-- TRACKING HELPERS
+-- ============================================
+
+function Feature._safeDisconnect(connection)
+	if connection then
+		pcall(function()
+			connection:Disconnect()
+		end)
+	end
+end
+
+function Feature._safeCancel(taskHandle)
+	if taskHandle then
+		pcall(function()
+			task.cancel(taskHandle)
+		end)
+	end
+end
+
+function Feature._safeDestroy(instance)
+	if instance then
+		pcall(function()
+			instance:Destroy()
+		end)
+	end
+end
+
+function Feature._trackConnection(connection)
+	if connection then
+		table.insert(Feature._connections, connection)
+	end
+	return connection
+end
+
+function Feature._trackInstance(instance)
+	if instance then
+		table.insert(Feature._instances, instance)
+	end
+	return instance
+end
+
+function Feature._trackTask(taskHandle)
+	if taskHandle then
+		table.insert(Feature._tasks, taskHandle)
+	end
+	return taskHandle
+end
+
+-- ============================================
+-- MODULE HELPERS
+-- ============================================
+
+function Feature._getCharacterController()
+	local characterController = Feature._replicatedStorage:FindFirstChild("Client")
+	characterController = characterController and characterController:FindFirstChild("Systems")
+	characterController = characterController and characterController:FindFirstChild("CharacterController")
+	return characterController
+end
+
+function Feature._getObjectsLibrary()
+	local shared = Feature._replicatedStorage:FindFirstChild("Shared")
+	return shared and shared:FindFirstChild("ObjectsLibrary")
+end
+
+-- ============================================
+-- GUN CONTROLLER PATCH
+-- ============================================
+
+function Feature._patchGunController()
+	local characterController = Feature._getCharacterController()
+
+	if not characterController then
+		return false
+	end
+
+	local gunControllerModule = characterController:FindFirstChild("GunController")
+
+	if not gunControllerModule then
+		return false
+	end
+
+	local success, gunController = pcall(require, gunControllerModule)
+
+	if not success or type(gunController) ~= "table" then
+		return false
+	end
+
+	if type(gunController.new) ~= "function" then
+		return false
+	end
+
+	if not Feature._originalNew then
+		Feature._originalNew = gunController.new
+	end
+
+	Feature._gunController = gunController
+
+	gunController.new = function(...)
+		local gun = Feature._originalNew(...)
+
+		if not Feature._enabled or type(gun) ~= "table" then
+			return gun
+		end
+
+		gun.fireRate = Feature._config.fireRate
+
+		if Feature._config.zeroRecoil then
+			gun.visualKickBack = 0
+		end
+
+		if Feature._config.zeroSpread and type(gun.spreadParams) == "table" then
+			gun.spreadParams = {
+				Pellets = gun.spreadParams.Pellets or 1,
+				SpreadX = 0,
+				SpreadY = 0,
+			}
+		end
+
+		if Feature._config.bulletPenetration and gun.bulletPenetration ~= nil then
+			gun.bulletPenetration = Feature._config.bulletPenetration
+		end
+
+		return gun
+	end
+
+	return true
+end
+
+-- ============================================
+-- CAMERA PATCH
+-- ============================================
+
+function Feature._patchCamera()
+	local characterController = Feature._getCharacterController()
+
+	if not characterController then
+		return false
+	end
+
+	local cameraModule = characterController:FindFirstChild("Camera")
+
+	if not cameraModule then
+		return false
+	end
+
+	local success, camera = pcall(require, cameraModule)
+
+	if not success or type(camera) ~= "table" then
+		return false
+	end
+
+	if type(camera.recoil) ~= "function" then
+		return false
+	end
+
+	if not Feature._originalRecoil then
+		Feature._originalRecoil = camera.recoil
+	end
+
+	Feature._cameraModule = camera
+
+	camera.recoil = function(self, kickback)
+		if not Feature._enabled or not Feature._config.zeroRecoil then
+			return Feature._originalRecoil(self, kickback)
+		end
+	end
+
+	return true
+end
+
+-- ============================================
+-- OBJECTS LIBRARY PATCH
+-- ============================================
+
+function Feature._applyToEntry(entry, name)
+	if type(entry) ~= "table" then
+		return
+	end
+
+	local original = Feature._original
+
+	if original.KB[name] == nil and entry.KickBack ~= nil then
+		original.KB[name] = entry.KickBack
+	end
+
+	if original.FR[name] == nil and entry.FireRate ~= nil then
+		original.FR[name] = entry.FireRate
+	end
+
+	if original.RD[name] == nil and entry.ReloadDuration ~= nil then
+		original.RD[name] = entry.ReloadDuration
+	end
+
+	if original.DMG[name] == nil and entry.Damage ~= nil then
+		original.DMG[name] = entry.Damage
+	end
+
+	if original.SP[name] == nil and type(entry.SpreadParams) == "table" then
+		original.SP[name] = {
+			SpreadX = entry.SpreadParams.SpreadX,
+			SpreadY = entry.SpreadParams.SpreadY,
+		}
+	end
+
+	if Feature._config.zeroRecoil then
+		entry.KickBack = 0
+	end
+
+	if Feature._config.fireRate then
+		entry.FireRate = Feature._config.fireRate
+	end
+
+	if Feature._config.zeroReload and entry.ReloadDuration ~= nil then
+		entry.ReloadDuration = 0
+	end
+
+	if Feature._config.damage and entry.Damage ~= nil then
+		entry.Damage = Feature._config.damage
+	end
+
+	if Feature._config.zeroSpread and type(entry.SpreadParams) == "table" then
+		entry.SpreadParams.SpreadX = 0
+		entry.SpreadParams.SpreadY = 0
+	end
+end
+
+function Feature._patchObjectsLibrary()
+	if not Feature._config.patchLibrary then
+		return true
+	end
+
+	local libraryModule = Feature._getObjectsLibrary()
+
+	if not libraryModule then
+		return false
+	end
+
+	local success, library = pcall(require, libraryModule)
+
+	if not success or type(library) ~= "table" then
+		return false
+	end
+
+	if type(library.Objects) ~= "table" then
+		return false
+	end
+
+	Feature._objectsLibrary = library
+
+	local weaponTags = {
+		Firearm = true,
+		ExplosiveLauncher = true,
+		UndeadStaff = true,
+		WizardStaff = true,
+		HandCannon = true,
+		Minigun = true,
+	}
+
+	for name, entry in pairs(library.Objects) do
+		if type(entry) == "table" and type(entry.Tags) == "table" then
+			local isWeapon = false
+
+			for _, tag in ipairs(entry.Tags) do
+				if weaponTags[tag] then
+					isWeapon = true
+					break
+				end
+			end
+
+			if isWeapon then
+				Feature._applyToEntry(entry, name)
+
+				if type(entry.Upgrade) == "table" then
+					Feature._applyToEntry(entry.Upgrade, name .. ".Upgrade")
+				end
+			end
+		end
+	end
+
+	return true
+end
+
+-- ============================================
+-- RESTORE ORIGINAL VALUES
+-- ============================================
+
+function Feature._restoreObjectsLibrary()
+	if not Feature._objectsLibrary or not Feature._objectsLibrary.Objects then
+		return
+	end
+
+	local original = Feature._original
+	local objects = Feature._objectsLibrary.Objects
+
+	for name, value in pairs(original.KB) do
+		local entry = objects[name]
+
+		if entry then
+			entry.KickBack = value
+		end
+	end
+
+	for name, value in pairs(original.FR) do
+		local entry = objects[name]
+
+		if entry then
+			entry.FireRate = value
+		end
+	end
+
+	for name, value in pairs(original.RD) do
+		local entry = objects[name]
+
+		if entry then
+			entry.ReloadDuration = value
+		end
+	end
+
+	for name, value in pairs(original.DMG) do
+		local entry = objects[name]
+
+		if entry then
+			entry.Damage = value
+		end
+	end
+
+	for name, value in pairs(original.SP) do
+		local entry = objects[name]
+
+		if entry and type(entry.SpreadParams) == "table" then
+			entry.SpreadParams.SpreadX = value.SpreadX
+			entry.SpreadParams.SpreadY = value.SpreadY
+		end
+	end
+end
+
+-- ============================================
+-- RESTORE PATCHES
+-- ============================================
+
+function Feature._restorePatches()
+	if Feature._gunController and Feature._originalNew then
+		pcall(function()
+			Feature._gunController.new = Feature._originalNew
+		end)
+	end
+
+	if Feature._cameraModule and Feature._originalRecoil then
+		pcall(function()
+			Feature._cameraModule.recoil = Feature._originalRecoil
+		end)
+	end
+
+	Feature._restoreObjectsLibrary()
+end
+
+-- ============================================
+-- ENABLE
+-- ============================================
+
+function Feature.enable()
+	Feature.cleanup()
+
+	Feature._generation += 1
+	Feature._enabled = true
+	Feature._applied = false
+
+	local gunControllerApplied = Feature._patchGunController()
+	local cameraApplied = Feature._patchCamera()
+	local libraryApplied = Feature._patchObjectsLibrary()
+
+	Feature._applied = gunControllerApplied and cameraApplied and libraryApplied
+end
+
+-- ============================================
+-- DISABLE
+-- ============================================
+
+function Feature.disable()
+	Feature._enabled = false
+	Feature.cleanup()
+end
+
+-- ============================================
+-- IS ENABLED
+-- ============================================
+
+function Feature.isEnabled()
+	return Feature._enabled
+end
+
+-- ============================================
+-- CLEANUP
+-- ============================================
+
+function Feature.cleanup()
+	Feature._enabled = false
+	Feature._applied = false
+	Feature._generation += 1
+
+	for _, connection in ipairs(Feature._connections) do
+		Feature._safeDisconnect(connection)
+	end
+
+	for _, taskHandle in ipairs(Feature._tasks) do
+		Feature._safeCancel(taskHandle)
+	end
+
+	for _, instance in ipairs(Feature._instances) do
+		Feature._safeDestroy(instance)
+	end
+
+	Feature._restorePatches()
+
+	table.clear(Feature._connections)
+	table.clear(Feature._instances)
+	table.clear(Feature._tasks)
+
+	Feature._gunController = nil
+	Feature._cameraModule = nil
+	Feature._objectsLibrary = nil
+	Feature._originalNew = nil
+	Feature._originalRecoil = nil
+
+	table.clear(Feature._original.KB)
+	table.clear(Feature._original.FR)
+	table.clear(Feature._original.RD)
+	table.clear(Feature._original.SP)
+	table.clear(Feature._original.DMG)
+end
+
+return Feature
