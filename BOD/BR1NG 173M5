@@ -1,0 +1,453 @@
+-- ============================================
+-- BRING ITEMS
+-- ============================================
+
+local Feature = {
+	NAME = "Bring Items",
+
+	-- Feature Manager integration
+	_AUTO_ENABLE = true,
+
+	-- Services
+	_players = game:GetService("Players"),
+	_workspace = game:GetService("Workspace"),
+
+	-- Runtime state
+	_enabled = false,
+	_generation = 0,
+
+	-- Resource tracking
+	_connections = {},
+	_instances = {},
+	_tasks = {},
+
+	-- Runtime references
+	_player = nil,
+
+	-- ========================================
+	-- GUI CONTROL METADATA
+	-- ========================================
+
+	_DROPDOWNS = {},
+	_BUTTONS = {},
+}
+
+-- ============================================
+-- CONFIGURATION
+-- ============================================
+
+Feature._config = {
+	BringDelay = 0.05,
+	SkipPaidItems = true,
+}
+
+-- ============================================
+-- ITEM CATEGORIES
+-- ============================================
+
+Feature._metalItems = {
+	"MetalBarrel",
+	"MetalGear",
+	"MetalBucket",
+	"OldCan",
+	"CrushedCan",
+	"Nut",
+	"Wheel",
+	"WheelBarrow",
+	"Teapot",
+	"Gear",
+	"Nail",
+	"CrackedBell",
+	"Toaster",
+}
+
+Feature._woodItems = {
+	"WoodChair",
+	"WoodStool",
+	"WoodenNail",
+	"RockingChair",
+	"Lamp",
+	"VintageTV",
+}
+
+Feature._medItems = {
+	"Bandage",
+	"FirstAidKit",
+	"ReviveKit",
+}
+
+Feature._categoryOptions = {
+	"Metal",
+	"Wood",
+	"Med",
+	"Zombie",
+}
+
+-- ============================================
+-- SELECTION STATE
+-- ============================================
+
+Feature._selectedCategories = {
+	Metal = false,
+	Wood = false,
+	Med = false,
+	Zombie = false,
+}
+
+-- ============================================
+-- RESOURCE HELPERS
+-- ============================================
+
+function Feature._safeDisconnect(connection)
+	if connection then
+		pcall(function()
+			connection:Disconnect()
+		end)
+	end
+end
+
+function Feature._safeDestroy(instance)
+	if instance then
+		pcall(function()
+			instance:Destroy()
+		end)
+	end
+end
+
+function Feature._safeCancel(thread)
+	if thread then
+		pcall(function()
+			task.cancel(thread)
+		end)
+	end
+end
+
+function Feature._trackConnection(connection)
+	if connection then
+		table.insert(Feature._connections, connection)
+	end
+
+	return connection
+end
+
+function Feature._trackInstance(instance)
+	if instance then
+		table.insert(Feature._instances, instance)
+	end
+
+	return instance
+end
+
+function Feature._trackTask(thread)
+	if thread then
+		table.insert(Feature._tasks, thread)
+	end
+
+	return thread
+end
+
+-- ============================================
+-- SELECTION HELPERS
+-- ============================================
+
+function Feature._resetSelections()
+	for _, category in ipairs(Feature._categoryOptions) do
+		Feature._selectedCategories[category] = false
+	end
+end
+
+function Feature._buildSelectedNames()
+	local selectedNames = {}
+
+	if Feature._selectedCategories.Metal then
+		for _, name in ipairs(Feature._metalItems) do
+			selectedNames[name] = true
+		end
+	end
+
+	if Feature._selectedCategories.Wood then
+		for _, name in ipairs(Feature._woodItems) do
+			selectedNames[name] = true
+		end
+	end
+
+	if Feature._selectedCategories.Med then
+		for _, name in ipairs(Feature._medItems) do
+			selectedNames[name] = true
+		end
+	end
+
+	return selectedNames
+end
+
+-- ============================================
+-- ITEM CHECKING
+-- ============================================
+
+function Feature._isZombie(model)
+	if not model:IsA("Model") then
+		return false
+	end
+
+	return model:FindFirstChild("HumanoidRootPart", true) ~= nil
+end
+
+function Feature._matchesSelectedCategory(model, selectedNames)
+	if not model:IsA("Model") then
+		return false
+	end
+
+	-- Zombie category
+	if Feature._selectedCategories.Zombie then
+		if Feature._isZombie(model) then
+			return true
+		end
+	end
+
+	-- Named item categories
+	if next(selectedNames) == nil then
+		return false
+	end
+
+	if selectedNames[model.Name] then
+		return true
+	end
+
+	for _, descendant in ipairs(model:GetDescendants()) do
+		if selectedNames[descendant.Name] then
+			return true
+		end
+	end
+
+	return false
+end
+
+function Feature._shouldSkipPaidItem(model)
+	if not Feature._config.SkipPaidItems then
+		return false
+	end
+
+	return model:FindFirstChild("ProductPriceTag", true) ~= nil
+end
+
+-- ============================================
+-- BRING ITEMS
+-- ============================================
+
+function Feature._bringItems(generation)
+	if not Feature._enabled then
+		return
+	end
+
+	if generation ~= Feature._generation then
+		return
+	end
+
+	local player = Feature._player
+
+	if not player then
+		return
+	end
+
+	local character = player.Character
+
+	if not character then
+		return
+	end
+
+	local root = character:FindFirstChild("HumanoidRootPart")
+
+	if not root then
+		return
+	end
+
+	local selectedNames = Feature._buildSelectedNames()
+
+	-- Nothing selected
+	if next(selectedNames) == nil
+		and not Feature._selectedCategories.Zombie
+	then
+		return
+	end
+
+	for _, object in ipairs(Feature._workspace:GetDescendants()) do
+		if not Feature._enabled then
+			return
+		end
+
+		if generation ~= Feature._generation then
+			return
+		end
+
+		if object:IsA("Model") then
+			if Feature._matchesSelectedCategory(object, selectedNames) then
+
+				if not Feature._shouldSkipPaidItem(object) then
+
+					local primaryPart = object.PrimaryPart
+
+					if not primaryPart then
+						primaryPart = object:FindFirstChildWhichIsA(
+							"BasePart",
+							true
+						)
+					end
+
+					if primaryPart then
+						pcall(function()
+							primaryPart.CFrame = root.CFrame
+						end)
+					end
+
+					task.wait(Feature._config.BringDelay)
+				end
+			end
+		end
+	end
+end
+
+-- ============================================
+-- DROPDOWN
+-- ============================================
+
+Feature._DROPDOWNS = {
+	{
+		NAME = "Categories",
+
+		MULTI_SELECT = true,
+
+		OPTIONS = {
+			"Metal",
+			"Wood",
+			"Med",
+			"Zombie",
+		},
+
+		DEFAULT = {},
+
+		CALLBACK = function(selected)
+			if not Feature._enabled then
+				return
+			end
+
+			Feature._resetSelections()
+
+			if type(selected) ~= "table" then
+				return
+			end
+
+			-- Supports:
+			-- { Metal = true, Wood = true }
+			for key, value in pairs(selected) do
+				if Feature._selectedCategories[key] ~= nil then
+					Feature._selectedCategories[key] = value == true
+
+				-- Also supports:
+				-- { "Metal", "Wood" }
+				elseif type(key) == "number"
+					and Feature._selectedCategories[value] ~= nil
+				then
+					Feature._selectedCategories[value] = true
+				end
+			end
+		end,
+	},
+}
+
+-- ============================================
+-- BUTTON
+-- ============================================
+
+Feature._BUTTONS = {
+	{
+		NAME = "Bring",
+
+		CALLBACK = function()
+			if not Feature._enabled then
+				return
+			end
+
+			local generation = Feature._generation
+
+			Feature._trackTask(
+				task.spawn(function()
+					Feature._bringItems(generation)
+				end)
+			)
+		end,
+	},
+}
+
+-- ============================================
+-- INITIALIZATION
+-- ============================================
+
+function Feature._initialize()
+	Feature._player = Feature._players.LocalPlayer
+end
+
+-- ============================================
+-- ENABLE
+-- ============================================
+
+function Feature.enable()
+	Feature.cleanup()
+
+	Feature._generation = Feature._generation + 1
+	Feature._enabled = true
+
+	Feature._resetSelections()
+	Feature._initialize()
+end
+
+-- ============================================
+-- DISABLE
+-- ============================================
+
+function Feature.disable()
+	Feature._enabled = false
+	Feature.cleanup()
+end
+
+-- ============================================
+-- STATE
+-- ============================================
+
+function Feature.isEnabled()
+	return Feature._enabled == true
+end
+
+-- ============================================
+-- CLEANUP
+-- ============================================
+
+function Feature.cleanup()
+	Feature._generation = Feature._generation + 1
+	Feature._enabled = false
+
+	for _, connection in ipairs(Feature._connections) do
+		Feature._safeDisconnect(connection)
+	end
+
+	for _, thread in ipairs(Feature._tasks) do
+		Feature._safeCancel(thread)
+	end
+
+	for _, instance in ipairs(Feature._instances) do
+		Feature._safeDestroy(instance)
+	end
+
+	table.clear(Feature._connections)
+	table.clear(Feature._tasks)
+	table.clear(Feature._instances)
+
+	Feature._player = nil
+
+	Feature._resetSelections()
+end
+
+-- ============================================
+-- RETURN MODULE
+-- ============================================
+
+return Feature
