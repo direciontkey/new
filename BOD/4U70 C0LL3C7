@@ -7,7 +7,6 @@ local Feature = {
 	_players = game:GetService("Players"),
 	_userInputService = game:GetService("UserInputService"),
 	_replicatedStorage = game:GetService("ReplicatedStorage"),
-	_workspace = game:GetService("Workspace"),
 	_collectionService = game:GetService("CollectionService"),
 	_enabled = false,
 	_isCollecting = false,
@@ -18,7 +17,7 @@ local Feature = {
 	_player = nil,
 	_inventory = nil,
 	_interactables = nil,
-	_gui = nil,
+	_autoCollectGUI = nil,
 	_mainFrame = nil,
 	_toggleButton = nil,
 	_btnOutline = nil,
@@ -26,14 +25,13 @@ local Feature = {
 }
 
 -- ============================================
--- CONFIG
+-- SETTINGS
 -- ============================================
 
-Feature._config = {
-	COLLECT_SPEED = 0.03,
-	COLLECT_RANGE = 15,
-	TOGGLE_KEY = Enum.KeyCode.F,
-}
+Feature._collectSpeed = 0.1
+Feature._collectRange = 15
+Feature._collectRangeSq = Feature._collectRange * Feature._collectRange
+Feature._toggleKey = Enum.KeyCode.F
 
 -- ============================================
 -- TRACKING HELPERS
@@ -47,18 +45,18 @@ function Feature._safeDisconnect(connection)
 	end
 end
 
-function Feature._safeCancel(taskHandle)
-	if taskHandle then
-		pcall(function()
-			task.cancel(taskHandle)
-		end)
-	end
-end
-
 function Feature._safeDestroy(instance)
 	if instance then
 		pcall(function()
 			instance:Destroy()
+		end)
+	end
+end
+
+function Feature._safeCancel(thread)
+	if thread then
+		pcall(function()
+			task.cancel(thread)
 		end)
 	end
 end
@@ -77,11 +75,11 @@ function Feature._trackInstance(instance)
 	return instance
 end
 
-function Feature._trackTask(taskHandle)
-	if taskHandle then
-		table.insert(Feature._tasks, taskHandle)
+function Feature._trackTask(thread)
+	if thread then
+		table.insert(Feature._tasks, thread)
 	end
-	return taskHandle
+	return thread
 end
 
 -- ============================================
@@ -89,42 +87,40 @@ end
 -- ============================================
 
 function Feature._collectNearby(generation)
-	if generation ~= Feature._generation or not Feature._enabled or not Feature._isCollecting then
+	if not Feature._enabled or Feature._generation ~= generation then
 		return 0
 	end
 
-	local character = Feature._player.Character
+	local player = Feature._player
+	local char = player and player.Character
 
-	if not character or not character.PrimaryPart then
+	if not char or not char.PrimaryPart then
 		return 0
 	end
 
-	local position = character.PrimaryPart.Position
+	local pos = char.PrimaryPart.Position
 	local collected = 0
+	local tagged = Feature._collectionService:GetTagged("InteractablePhysicsObject")
 
-	for _, obj in ipairs(Feature._workspace:GetDescendants()) do
-		if generation ~= Feature._generation or not Feature._enabled or not Feature._isCollecting then
+	for _, obj in ipairs(tagged) do
+		if not Feature._enabled or Feature._generation ~= generation then
 			break
 		end
 
-		if obj:IsA("Model") and obj:HasTag("InteractablePhysicsObject") then
-			local objectPosition = obj.PrimaryPart and obj.PrimaryPart.Position
+		if obj:IsA("Model") then
+			local objPos = obj.PrimaryPart and obj.PrimaryPart.Position
 
-			if objectPosition then
-				local distance = (objectPosition - position).Magnitude
+			if objPos then
+				local diff = objPos - pos
 
-				if distance < Feature._config.COLLECT_RANGE then
-					local success, data = pcall(function()
-						return Feature._interactables.getObjectByModel(obj)
-					end)
+				if diff.X * diff.X + diff.Y * diff.Y + diff.Z * diff.Z < Feature._collectRangeSq then
+					local data = Feature._interactables.getObjectByModel(obj)
 
-					if success and data then
+					if data then
 						pcall(function()
 							Feature._inventory.pickupObject(data.uuid)
-							collected += 1
+							collected = collected + 1
 						end)
-
-						task.wait(0.005)
 					end
 				end
 			end
@@ -134,62 +130,64 @@ function Feature._collectNearby(generation)
 	return collected
 end
 
+-- ============================================
+-- BUTTON STATE
+-- ============================================
+
+function Feature._updateButtonState(enabled)
+	local toggleButton = Feature._toggleButton
+	local btnOutline = Feature._btnOutline
+	local mainOutline = Feature._mainOutline
+
+	if not toggleButton or not btnOutline or not mainOutline then
+		return
+	end
+
+	if enabled then
+		toggleButton.Text = "OFF"
+		toggleButton.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+		btnOutline.Color = Color3.fromRGB(255, 100, 100)
+		btnOutline.Transparency = 0.3
+		mainOutline.Color = Color3.fromRGB(255, 100, 100)
+		mainOutline.Transparency = 0.3
+	else
+		toggleButton.Text = "ON"
+		toggleButton.BackgroundColor3 = Color3.fromRGB(0, 200, 80)
+		btnOutline.Color = Color3.fromRGB(255, 255, 255)
+		btnOutline.Transparency = 0.5
+		mainOutline.Color = Color3.fromRGB(255, 255, 255)
+		mainOutline.Transparency = 0.4
+	end
+end
+
+-- ============================================
+-- COLLECTION TOGGLE
+-- ============================================
+
 function Feature._startCollecting()
 	if Feature._isCollecting then
 		return
 	end
 
 	Feature._isCollecting = true
-	Feature._updateButton()
+	Feature._updateButtonState(true)
 
 	local generation = Feature._generation
 
-	local thread = task.spawn(function()
-		while generation == Feature._generation and Feature._enabled and Feature._isCollecting do
+	Feature._trackTask(task.spawn(function()
+		while Feature._enabled and Feature._isCollecting and Feature._generation == generation do
 			Feature._collectNearby(generation)
-			task.wait(Feature._config.COLLECT_SPEED)
+			task.wait(Feature._collectSpeed)
 		end
-	end)
-
-	Feature._trackTask(thread)
+	end))
 end
 
 function Feature._stopCollecting()
 	Feature._isCollecting = false
-	Feature._updateButton()
-end
-
--- ============================================
--- GUI
--- ============================================
-
-function Feature._updateButton()
-	if not Feature._toggleButton or not Feature._btnOutline or not Feature._mainOutline then
-		return
-	end
-
-	if Feature._isCollecting then
-		Feature._toggleButton.Text = "OFF"
-		Feature._toggleButton.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
-		Feature._btnOutline.Color = Color3.fromRGB(255, 100, 100)
-		Feature._btnOutline.Transparency = 0.3
-		Feature._mainOutline.Color = Color3.fromRGB(255, 100, 100)
-		Feature._mainOutline.Transparency = 0.3
-	else
-		Feature._toggleButton.Text = "ON"
-		Feature._toggleButton.BackgroundColor3 = Color3.fromRGB(0, 200, 80)
-		Feature._btnOutline.Color = Color3.fromRGB(255, 255, 255)
-		Feature._btnOutline.Transparency = 0.5
-		Feature._mainOutline.Color = Color3.fromRGB(255, 255, 255)
-		Feature._mainOutline.Transparency = 0.4
-	end
+	Feature._updateButtonState(false)
 end
 
 function Feature._toggleCollect()
-	if not Feature._enabled then
-		return
-	end
-
 	if Feature._isCollecting then
 		Feature._stopCollecting()
 	else
@@ -197,44 +195,41 @@ function Feature._toggleCollect()
 	end
 end
 
+-- ============================================
+-- BUILD GUI
+-- ============================================
+
 function Feature._createGUI()
 	local playerGui = Feature._player:WaitForChild("PlayerGui")
 
-	local gui = Instance.new("ScreenGui")
-	gui.Name = "AutoCollectGUI"
-	gui.Parent = playerGui
-	gui.IgnoreGuiInset = true
-	Feature._trackInstance(gui)
-	Feature._gui = gui
+	local autoCollectGUI = Feature._trackInstance(Instance.new("ScreenGui"))
+	autoCollectGUI.Name = "AutoCollectGUI"
+	autoCollectGUI.Parent = playerGui
+	autoCollectGUI.IgnoreGuiInset = true
 
-	local mainFrame = Instance.new("Frame")
+	local mainFrame = Feature._trackInstance(Instance.new("Frame"))
 	mainFrame.Name = "MainFrame"
-	mainFrame.Parent = gui
+	mainFrame.Parent = autoCollectGUI
 	mainFrame.Position = UDim2.new(0.5, 261, 0.5, 56)
 	mainFrame.Size = UDim2.new(0, 46, 0, 46)
 	mainFrame.AnchorPoint = Vector2.new(0, 0)
 	mainFrame.BackgroundColor3 = Color3.fromRGB(50, 50, 70)
 	mainFrame.BackgroundTransparency = 0.5
 	mainFrame.BorderSizePixel = 0
-	Feature._trackInstance(mainFrame)
-	Feature._mainFrame = mainFrame
 
-	local corner = Instance.new("UICorner")
+	local corner = Feature._trackInstance(Instance.new("UICorner"))
 	corner.CornerRadius = UDim.new(0, 8)
 	corner.Parent = mainFrame
-	Feature._trackInstance(corner)
 
-	local mainOutline = Instance.new("UIStroke")
+	local mainOutline = Feature._trackInstance(Instance.new("UIStroke"))
 	mainOutline.Name = "MainOutline"
 	mainOutline.Color = Color3.fromRGB(255, 255, 255)
 	mainOutline.Thickness = 1
 	mainOutline.Transparency = 0.4
 	mainOutline.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 	mainOutline.Parent = mainFrame
-	Feature._trackInstance(mainOutline)
-	Feature._mainOutline = mainOutline
 
-	local toggleButton = Instance.new("TextButton")
+	local toggleButton = Feature._trackInstance(Instance.new("TextButton"))
 	toggleButton.Name = "ToggleButton"
 	toggleButton.Size = UDim2.new(0, 34, 0, 34)
 	toggleButton.Position = UDim2.new(0, 6, 0, 6)
@@ -246,25 +241,20 @@ function Feature._createGUI()
 	toggleButton.TextSize = 16
 	toggleButton.FontFace = Font.new("rbxasset://fonts/families/SourceSansPro.json", Enum.FontWeight.Bold)
 	toggleButton.Parent = mainFrame
-	Feature._trackInstance(toggleButton)
-	Feature._toggleButton = toggleButton
 
-	local btnCorner = Instance.new("UICorner")
+	local btnCorner = Feature._trackInstance(Instance.new("UICorner"))
 	btnCorner.CornerRadius = UDim.new(0, 4)
 	btnCorner.Parent = toggleButton
-	Feature._trackInstance(btnCorner)
 
-	local btnOutline = Instance.new("UIStroke")
+	local btnOutline = Feature._trackInstance(Instance.new("UIStroke"))
 	btnOutline.Name = "ButtonOutline"
 	btnOutline.Color = Color3.fromRGB(255, 255, 255)
 	btnOutline.Thickness = 1
 	btnOutline.Transparency = 0.5
 	btnOutline.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 	btnOutline.Parent = toggleButton
-	Feature._trackInstance(btnOutline)
-	Feature._btnOutline = btnOutline
 
-	local collectLabel = Instance.new("TextLabel")
+	local collectLabel = Feature._trackInstance(Instance.new("TextLabel"))
 	collectLabel.Name = "CollectLabel"
 	collectLabel.Size = UDim2.new(1, 0, 0, 15)
 	collectLabel.Position = UDim2.new(0, 0, 1, 2)
@@ -275,17 +265,37 @@ function Feature._createGUI()
 	collectLabel.Font = Enum.Font.Gotham
 	collectLabel.TextXAlignment = Enum.TextXAlignment.Center
 	collectLabel.Parent = mainFrame
-	Feature._trackInstance(collectLabel)
+
+	Feature._autoCollectGUI = autoCollectGUI
+	Feature._mainFrame = mainFrame
+	Feature._toggleButton = toggleButton
+	Feature._btnOutline = btnOutline
+	Feature._mainOutline = mainOutline
 
 	Feature._trackConnection(toggleButton.MouseButton1Click:Connect(function()
 		if not Feature._enabled then
 			return
 		end
-
 		Feature._toggleCollect()
 	end))
+end
 
-	Feature._updateButton()
+-- ============================================
+-- INPUT
+-- ============================================
+
+function Feature._setupInput()
+	local generation = Feature._generation
+
+	Feature._trackConnection(Feature._userInputService.InputBegan:Connect(function(input, gp)
+		if not Feature._enabled or Feature._generation ~= generation or gp then
+			return
+		end
+
+		if input.KeyCode == Feature._toggleKey then
+			Feature._toggleCollect()
+		end
+	end))
 end
 
 -- ============================================
@@ -295,50 +305,21 @@ end
 function Feature.enable()
 	Feature.cleanup()
 
-	Feature._generation += 1
+	Feature._generation = Feature._generation + 1
 	Feature._enabled = true
 	Feature._isCollecting = false
 	Feature._player = Feature._players.LocalPlayer
 
-	if not Feature._player then
-		Feature._enabled = false
-		Feature.cleanup()
-		return
-	end
+	Feature._inventory = require(
+		Feature._replicatedStorage.Client.Systems.Inventory
+	)
 
-	local inventoryModule = Feature._replicatedStorage
-		:WaitForChild("Client")
-		:WaitForChild("Systems")
-		:WaitForChild("Inventory")
-
-	local interactablesModule = Feature._replicatedStorage
-		:WaitForChild("Client")
-		:WaitForChild("Systems")
-		:WaitForChild("Interactables")
-
-	local inventorySuccess, inventory = pcall(require, inventoryModule)
-	local interactablesSuccess, interactables = pcall(require, interactablesModule)
-
-	if not inventorySuccess or not interactablesSuccess then
-		Feature._enabled = false
-		Feature.cleanup()
-		return
-	end
-
-	Feature._inventory = inventory
-	Feature._interactables = interactables
+	Feature._interactables = require(
+		Feature._replicatedStorage.Client.Systems.Interactables
+	)
 
 	Feature._createGUI()
-
-	Feature._trackConnection(Feature._userInputService.InputBegan:Connect(function(input, gameProcessed)
-		if not Feature._enabled or gameProcessed then
-			return
-		end
-
-		if input.KeyCode == Feature._config.TOGGLE_KEY then
-			Feature._toggleCollect()
-		end
-	end))
+	Feature._setupInput()
 end
 
 -- ============================================
@@ -364,16 +345,16 @@ end
 -- ============================================
 
 function Feature.cleanup()
+	Feature._generation = Feature._generation + 1
 	Feature._enabled = false
 	Feature._isCollecting = false
-	Feature._generation += 1
 
 	for _, connection in ipairs(Feature._connections) do
 		Feature._safeDisconnect(connection)
 	end
 
-	for _, taskHandle in ipairs(Feature._tasks) do
-		Feature._safeCancel(taskHandle)
+	for _, thread in ipairs(Feature._tasks) do
+		Feature._safeCancel(thread)
 	end
 
 	for _, instance in ipairs(Feature._instances) do
@@ -381,13 +362,13 @@ function Feature.cleanup()
 	end
 
 	table.clear(Feature._connections)
-	table.clear(Feature._instances)
 	table.clear(Feature._tasks)
+	table.clear(Feature._instances)
 
 	Feature._player = nil
 	Feature._inventory = nil
 	Feature._interactables = nil
-	Feature._gui = nil
+	Feature._autoCollectGUI = nil
 	Feature._mainFrame = nil
 	Feature._toggleButton = nil
 	Feature._btnOutline = nil
