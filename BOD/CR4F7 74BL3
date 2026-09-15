@@ -1,0 +1,121 @@
+-- ============================================
+-- MIXER / OVEN UPGRADES - FEATURE MODULE
+-- ============================================
+
+local Event = game:GetService("ReplicatedStorage").ZAP.ZAP_RELIABLE
+
+local Feature = {
+	NAME = "Mixer/Oven Upgrades",
+	_AUTO_ENABLE = true,
+	_enabled = false,
+	_generation = 0,
+	_connections = {},
+	_instances = {},
+	_tasks = {},
+	_DROPDOWNS = {},
+	_BUTTONS = {},
+}
+
+-- ============================================
+-- FIRE
+-- ============================================
+
+function Feature._fire(bytes)
+	if not Feature._enabled then
+		return
+	end
+
+	local bufferData = buffer.create(#bytes)
+
+	for i = 1, #bytes do
+		buffer.writeu8(bufferData, i - 1, bytes[i])
+	end
+
+	Event:FireServer(bufferData, {})
+end
+
+-- ============================================
+-- BUTTON
+-- ============================================
+
+Feature._BUTTONS = {
+	{
+		NAME = "Run Upgrades",
+		CALLBACK = function()
+			if not Feature._enabled then
+				return
+			end
+
+			Feature._fire({58})
+			Feature._fire({58})
+			Feature._fire({58})
+			Feature._fire({57, 27, 0, 77, 105, 120, 101, 114, 83, 112, 101, 101, 100, 85, 112, 103, 114, 97, 100, 101, 49, 66, 108, 117, 101, 112, 114, 105, 110, 116})
+			Feature._fire({57, 30, 0, 77, 105, 120, 101, 114, 67, 97, 112, 97, 99, 105, 116, 121, 85, 112, 103, 114, 97, 100, 101, 49, 66, 108, 117, 101, 112, 114, 105, 110, 116})
+			Feature._fire({57, 18, 0, 65, 117, 116, 111, 77, 105, 120, 101, 114, 66, 108, 117, 101, 112, 114, 105, 110, 116})
+			Feature._fire({57, 26, 0, 79, 118, 101, 110, 83, 112, 101, 101, 100, 85, 112, 103, 114, 97, 100, 101, 49, 66, 108, 117, 101, 112, 114, 105, 110, 116})
+			Feature._fire({57, 27, 0, 77, 105, 120, 101, 114, 83, 112, 101, 101, 100, 85, 112, 103, 114, 97, 100, 101, 50, 66, 108, 117, 101, 112, 114, 105, 110, 116})
+			Feature._fire({57, 26, 0, 79, 118, 101, 110, 83, 112, 101, 101, 100, 85, 112, 103, 114, 97, 100, 101, 50, 66, 108, 117, 101, 112, 114, 105, 110, 116})
+			Feature._fire({57, 21, 0, 67, 111, 110, 118, 101, 121, 111, 114, 66, 101, 108, 116, 66, 108, 117, 101, 112, 114, 105, 110, 116})
+		end,
+	},
+}
+
+-- ============================================
+-- ENABLE
+-- ============================================
+
+function Feature.enable()
+	Feature.cleanup()
+	Feature._generation = Feature._generation + 1
+	Feature._enabled = true
+end
+
+-- ============================================
+-- DISABLE
+-- ============================================
+
+function Feature.disable()
+	Feature._enabled = false
+	Feature.cleanup()
+end
+
+-- ============================================
+-- STATE
+-- ============================================
+
+function Feature.isEnabled()
+	return Feature._enabled == true
+end
+
+-- ============================================
+-- CLEANUP
+-- ============================================
+
+function Feature.cleanup()
+	Feature._generation = Feature._generation + 1
+	Feature._enabled = false
+
+	for _, connection in ipairs(Feature._connections) do
+		pcall(function()
+			connection:Disconnect()
+		end)
+	end
+
+	for _, thread in ipairs(Feature._tasks) do
+		pcall(function()
+			task.cancel(thread)
+		end)
+	end
+
+	for _, instance in ipairs(Feature._instances) do
+		pcall(function()
+			instance:Destroy()
+		end)
+	end
+
+	table.clear(Feature._connections)
+	table.clear(Feature._tasks)
+	table.clear(Feature._instances)
+end
+
+return Feature
