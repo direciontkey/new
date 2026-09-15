@@ -1,33 +1,18 @@
 -- ============================================
--- BRING ITEMS
+-- BRING ITEMS - FEATURE MODULE
 -- ============================================
 
 local Feature = {
 	NAME = "Bring Items",
-
-	-- Feature Manager integration
 	_AUTO_ENABLE = true,
-
-	-- Services
 	_players = game:GetService("Players"),
 	_workspace = game:GetService("Workspace"),
-
-	-- Runtime state
 	_enabled = false,
 	_generation = 0,
-
-	-- Resource tracking
 	_connections = {},
 	_instances = {},
 	_tasks = {},
-
-	-- Runtime references
 	_player = nil,
-
-	-- ========================================
-	-- GUI CONTROL METADATA
-	-- ========================================
-
 	_DROPDOWNS = {},
 	_BUTTONS = {},
 }
@@ -42,45 +27,25 @@ Feature._config = {
 }
 
 -- ============================================
--- ITEM CATEGORIES
+-- ITEM LISTS
 -- ============================================
 
 Feature._metalItems = {
-	"MetalBarrel",
-	"MetalGear",
-	"MetalBucket",
-	"OldCan",
-	"CrushedCan",
-	"Nut",
-	"Wheel",
-	"WheelBarrow",
-	"Teapot",
-	"Gear",
-	"Nail",
-	"CrackedBell",
-	"Toaster",
+	"MetalBarrel", "MetalGear", "MetalBucket", "OldCan", "CrushedCan",
+	"Nut", "Wheel", "WheelBarrow", "Teapot", "Gear", "Nail",
+	"CrackedBell", "Toaster",
 }
 
 Feature._woodItems = {
-	"WoodChair",
-	"WoodStool",
-	"WoodenNail",
-	"RockingChair",
-	"Lamp",
-	"VintageTV",
+	"WoodChair", "WoodStool", "WoodenNail", "RockingChair", "Lamp", "VintageTV",
 }
 
 Feature._medItems = {
-	"Bandage",
-	"FirstAidKit",
-	"ReviveKit",
+	"Bandage", "FirstAidKit", "ReviveKit",
 }
 
 Feature._categoryOptions = {
-	"Metal",
-	"Wood",
-	"Med",
-	"Zombie",
+	"Metal", "Wood", "Med", "Zombie",
 }
 
 -- ============================================
@@ -126,7 +91,6 @@ function Feature._trackConnection(connection)
 	if connection then
 		table.insert(Feature._connections, connection)
 	end
-
 	return connection
 end
 
@@ -134,7 +98,6 @@ function Feature._trackInstance(instance)
 	if instance then
 		table.insert(Feature._instances, instance)
 	end
-
 	return instance
 end
 
@@ -142,7 +105,6 @@ function Feature._trackTask(thread)
 	if thread then
 		table.insert(Feature._tasks, thread)
 	end
-
 	return thread
 end
 
@@ -181,40 +143,26 @@ function Feature._buildSelectedNames()
 end
 
 -- ============================================
--- ITEM CHECKING
+-- ITEM MATCHING
 -- ============================================
-
-function Feature._isZombie(model)
-	if not model:IsA("Model") then
-		return false
-	end
-
-	return model:FindFirstChild("HumanoidRootPart", true) ~= nil
-end
 
 function Feature._matchesSelectedCategory(model, selectedNames)
 	if not model:IsA("Model") then
 		return false
 	end
 
-	-- Zombie category
 	if Feature._selectedCategories.Zombie then
-		if Feature._isZombie(model) then
+		if model:FindFirstChild("HumanoidRootPart") then
 			return true
 		end
-	end
-
-	-- Named item categories
-	if next(selectedNames) == nil then
-		return false
 	end
 
 	if selectedNames[model.Name] then
 		return true
 	end
 
-	for _, descendant in ipairs(model:GetDescendants()) do
-		if selectedNames[descendant.Name] then
+	for _, child in ipairs(model:GetChildren()) do
+		if selectedNames[child.Name] then
 			return true
 		end
 	end
@@ -222,12 +170,16 @@ function Feature._matchesSelectedCategory(model, selectedNames)
 	return false
 end
 
+-- ============================================
+-- PAID ITEM CHECK
+-- ============================================
+
 function Feature._shouldSkipPaidItem(model)
 	if not Feature._config.SkipPaidItems then
 		return false
 	end
 
-	return model:FindFirstChild("ProductPriceTag", true) ~= nil
+	return model:FindFirstChild("ProductPriceTag") ~= nil
 end
 
 -- ============================================
@@ -255,22 +207,28 @@ function Feature._bringItems(generation)
 		return
 	end
 
-	local root = character:FindFirstChild("HumanoidRootPart")
+	local rootPart = character:FindFirstChild("HumanoidRootPart")
 
-	if not root then
+	if not rootPart then
 		return
 	end
 
 	local selectedNames = Feature._buildSelectedNames()
+	local bringBodies = Feature._selectedCategories.Zombie
 
-	-- Nothing selected
-	if next(selectedNames) == nil
-		and not Feature._selectedCategories.Zombie
-	then
+	if not next(selectedNames) and not bringBodies then
 		return
 	end
 
-	for _, object in ipairs(Feature._workspace:GetDescendants()) do
+	local interactables = Feature._workspace:FindFirstChild("Interactables")
+
+	if not interactables then
+		return
+	end
+
+	local broughtCount = 0
+
+	for _, object in ipairs(interactables:GetChildren()) do
 		if not Feature._enabled then
 			return
 		end
@@ -279,26 +237,35 @@ function Feature._bringItems(generation)
 			return
 		end
 
-		if object:IsA("Model") then
-			if Feature._matchesSelectedCategory(object, selectedNames) then
+		if object:IsA("Model") and object.PrimaryPart then
+			if not Feature._shouldSkipPaidItem(object) then
+				local shouldBring = false
 
-				if not Feature._shouldSkipPaidItem(object) then
-
-					local primaryPart = object.PrimaryPart
-
-					if not primaryPart then
-						primaryPart = object:FindFirstChildWhichIsA(
-							"BasePart",
-							true
-						)
+				if bringBodies then
+					if object:FindFirstChild("HumanoidRootPart") then
+						shouldBring = true
 					end
+				end
 
-					if primaryPart then
-						pcall(function()
-							primaryPart.CFrame = root.CFrame
-						end)
+				if not shouldBring then
+					if selectedNames[object.Name] then
+						shouldBring = true
+					else
+						for _, child in ipairs(object:GetChildren()) do
+							if selectedNames[child.Name] then
+								shouldBring = true
+								break
+							end
+						end
 					end
+				end
 
+				if shouldBring then
+					pcall(function()
+						object.PrimaryPart.CFrame = rootPart.CFrame
+					end)
+
+					broughtCount = broughtCount + 1
 					task.wait(Feature._config.BringDelay)
 				end
 			end
@@ -313,18 +280,9 @@ end
 Feature._DROPDOWNS = {
 	{
 		NAME = "Categories",
-
 		MULTI_SELECT = true,
-
-		OPTIONS = {
-			"Metal",
-			"Wood",
-			"Med",
-			"Zombie",
-		},
-
+		OPTIONS = {"Metal", "Wood", "Med", "Zombie"},
 		DEFAULT = {},
-
 		CALLBACK = function(selected)
 			if not Feature._enabled then
 				return
@@ -336,17 +294,10 @@ Feature._DROPDOWNS = {
 				return
 			end
 
-			-- Supports:
-			-- { Metal = true, Wood = true }
 			for key, value in pairs(selected) do
 				if Feature._selectedCategories[key] ~= nil then
 					Feature._selectedCategories[key] = value == true
-
-				-- Also supports:
-				-- { "Metal", "Wood" }
-				elseif type(key) == "number"
-					and Feature._selectedCategories[value] ~= nil
-				then
+				elseif type(key) == "number" and Feature._selectedCategories[value] ~= nil then
 					Feature._selectedCategories[value] = true
 				end
 			end
@@ -361,7 +312,6 @@ Feature._DROPDOWNS = {
 Feature._BUTTONS = {
 	{
 		NAME = "Bring",
-
 		CALLBACK = function()
 			if not Feature._enabled then
 				return
@@ -369,11 +319,11 @@ Feature._BUTTONS = {
 
 			local generation = Feature._generation
 
-			Feature._trackTask(
-				task.spawn(function()
-					Feature._bringItems(generation)
-				end)
-			)
+			local thread = task.spawn(function()
+				Feature._bringItems(generation)
+			end)
+
+			Feature._trackTask(thread)
 		end,
 	},
 }
@@ -392,10 +342,8 @@ end
 
 function Feature.enable()
 	Feature.cleanup()
-
 	Feature._generation = Feature._generation + 1
 	Feature._enabled = true
-
 	Feature._resetSelections()
 	Feature._initialize()
 end
@@ -442,7 +390,6 @@ function Feature.cleanup()
 	table.clear(Feature._instances)
 
 	Feature._player = nil
-
 	Feature._resetSelections()
 end
 
