@@ -1,0 +1,439 @@
+-- ============================================
+-- AUTO-DEPOSIT
+-- ============================================
+
+local Feature = {
+	NAME = "Auto-Deposit",
+	_players = game:GetService("Players"),
+	_userInputService = game:GetService("UserInputService"),
+	_coreGui = game:GetService("CoreGui"),
+	_replicatedStorage = game:GetService("ReplicatedStorage"),
+	_enabled = false,
+	_isDepositing = false,
+	_generation = 0,
+	_connections = {},
+	_instances = {},
+	_tasks = {},
+	_player = nil,
+	_zap = nil,
+	_interactions = nil,
+	_gui = nil,
+	_mainFrame = nil,
+	_depositButton = nil,
+	_btnOutline = nil,
+	_mainOutline = nil,
+}
+
+-- ============================================
+-- CONFIG
+-- ============================================
+
+Feature._config = {
+	DEPOSIT_INTERVAL = 0.1,
+	TOGGLE_KEY = Enum.KeyCode.Q,
+}
+
+-- ============================================
+-- TRACKING HELPERS
+-- ============================================
+
+function Feature._safeDisconnect(connection)
+	if connection then
+		pcall(function()
+			connection:Disconnect()
+		end)
+	end
+end
+
+function Feature._safeCancel(taskHandle)
+	if taskHandle then
+		pcall(function()
+			task.cancel(taskHandle)
+		end)
+	end
+end
+
+function Feature._safeDestroy(instance)
+	if instance then
+		pcall(function()
+			instance:Destroy()
+		end)
+	end
+end
+
+function Feature._trackConnection(connection)
+	if connection then
+		table.insert(Feature._connections, connection)
+	end
+	return connection
+end
+
+function Feature._trackInstance(instance)
+	if instance then
+		table.insert(Feature._instances, instance)
+	end
+	return instance
+end
+
+function Feature._trackTask(taskHandle)
+	if taskHandle then
+		table.insert(Feature._tasks, taskHandle)
+	end
+	return taskHandle
+end
+
+-- ============================================
+-- DEPOSIT LOGIC
+-- ============================================
+
+function Feature._getFocusedDeposit()
+	if not Feature._interactions then
+		return nil
+	end
+
+	local success, deposit = pcall(function()
+		return Feature._interactions.getFocusedObjectDeposit()
+	end)
+
+	if success then
+		return deposit
+	end
+
+	return nil
+end
+
+function Feature._depositToStation(deposit)
+	if not deposit or not Feature._zap then
+		return false
+	end
+
+	local success = pcall(function()
+		Feature._zap.dropObject.fire({
+			objectDeposit = deposit,
+		})
+	end)
+
+	return success
+end
+
+function Feature._checkDeposit()
+	local focused = Feature._getFocusedDeposit()
+
+	if focused then
+		return true, focused
+	end
+
+	return false, nil
+end
+
+function Feature._startAutoDeposit()
+	if Feature._isDepositing then
+		return
+	end
+
+	Feature._isDepositing = true
+	Feature._updateButtonState(true)
+
+	local generation = Feature._generation
+
+	local thread = task.spawn(function()
+		while generation == Feature._generation and Feature._enabled and Feature._isDepositing do
+			local hasFocus, focused = Feature._checkDeposit()
+
+			if hasFocus and focused then
+				Feature._depositToStation(focused)
+			end
+
+			task.wait(Feature._config.DEPOSIT_INTERVAL)
+		end
+	end)
+
+	Feature._trackTask(thread)
+end
+
+function Feature._stopAutoDeposit()
+	Feature._isDepositing = false
+	Feature._updateButtonState(false)
+end
+
+function Feature._toggleAutoDeposit()
+	if not Feature._enabled then
+		return
+	end
+
+	if Feature._isDepositing then
+		Feature._stopAutoDeposit()
+	else
+		Feature._startAutoDeposit()
+	end
+end
+
+-- ============================================
+-- GUI STATE
+-- ============================================
+
+function Feature._updateButtonState(enabled)
+	if not Feature._depositButton or not Feature._btnOutline or not Feature._mainOutline then
+		return
+	end
+
+	if enabled then
+		Feature._depositButton.Text = "OFF"
+		Feature._depositButton.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+		Feature._btnOutline.Color = Color3.fromRGB(255, 100, 100)
+		Feature._btnOutline.Transparency = 0.3
+		Feature._mainOutline.Color = Color3.fromRGB(255, 100, 100)
+		Feature._mainOutline.Transparency = 0.3
+	else
+		Feature._depositButton.Text = "ON"
+		Feature._depositButton.BackgroundColor3 = Color3.fromRGB(0, 200, 80)
+		Feature._btnOutline.Color = Color3.fromRGB(255, 255, 255)
+		Feature._btnOutline.Transparency = 0.5
+		Feature._mainOutline.Color = Color3.fromRGB(255, 255, 255)
+		Feature._mainOutline.Transparency = 0.4
+	end
+end
+
+-- ============================================
+-- DRAGGING
+-- ============================================
+
+function Feature._setupDragging()
+	local mainFrame = Feature._mainFrame
+	local dragging = false
+	local dragInput = nil
+	local dragStart = nil
+	local startPosition = nil
+
+	Feature._trackConnection(mainFrame.InputBegan:Connect(function(input)
+		if not Feature._enabled then
+			return
+		end
+
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			dragStart = input.Position
+			startPosition = mainFrame.Position
+
+			Feature._trackConnection(input.Changed:Connect(function()
+				if input.UserInputState == Enum.UserInputState.End then
+					dragging = false
+				end
+			end))
+		end
+	end))
+
+	Feature._trackConnection(mainFrame.InputChanged:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+			dragInput = input
+		end
+	end))
+
+	Feature._trackConnection(Feature._userInputService.InputChanged:Connect(function(input)
+		if not Feature._enabled or not dragging or input ~= dragInput then
+			return
+		end
+
+		local delta = input.Position - dragStart
+
+		mainFrame.Position = UDim2.new(
+			startPosition.X.Scale,
+			startPosition.X.Offset + delta.X,
+			startPosition.Y.Scale,
+			startPosition.Y.Offset + delta.Y
+		)
+	end))
+end
+
+-- ============================================
+-- GUI
+-- ============================================
+
+function Feature._createGUI()
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "DepositGUI"
+	gui.Parent = Feature._coreGui
+	gui.IgnoreGuiInset = true
+	Feature._trackInstance(gui)
+	Feature._gui = gui
+
+	local mainFrame = Instance.new("Frame")
+	mainFrame.Name = "MainFrame"
+	mainFrame.Parent = gui
+	mainFrame.Position = UDim2.new(0.5, 209, 0.5, 56)
+	mainFrame.Size = UDim2.new(0, 46, 0, 46)
+	mainFrame.AnchorPoint = Vector2.new(0, 0)
+	mainFrame.BackgroundColor3 = Color3.fromRGB(50, 50, 70)
+	mainFrame.BackgroundTransparency = 0.5
+	mainFrame.BorderSizePixel = 0
+	Feature._trackInstance(mainFrame)
+	Feature._mainFrame = mainFrame
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 8)
+	corner.Parent = mainFrame
+	Feature._trackInstance(corner)
+
+	local mainOutline = Instance.new("UIStroke")
+	mainOutline.Name = "MainOutline"
+	mainOutline.Color = Color3.fromRGB(255, 255, 255)
+	mainOutline.Thickness = 1
+	mainOutline.Transparency = 0.4
+	mainOutline.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	mainOutline.Parent = mainFrame
+	Feature._trackInstance(mainOutline)
+	Feature._mainOutline = mainOutline
+
+	local depositButton = Instance.new("TextButton")
+	depositButton.Name = "DepositButton"
+	depositButton.Size = UDim2.new(0, 34, 0, 34)
+	depositButton.Position = UDim2.new(0, 6, 0, 6)
+	depositButton.BackgroundColor3 = Color3.fromRGB(0, 200, 80)
+	depositButton.BackgroundTransparency = 0.3
+	depositButton.BorderSizePixel = 0
+	depositButton.Text = "ON"
+	depositButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+	depositButton.TextSize = 14
+	depositButton.FontFace = Font.new("rbxasset://fonts/families/SourceSansPro.json", Enum.FontWeight.Bold)
+	depositButton.Parent = mainFrame
+	Feature._trackInstance(depositButton)
+	Feature._depositButton = depositButton
+
+	local btnCorner = Instance.new("UICorner")
+	btnCorner.CornerRadius = UDim.new(0, 4)
+	btnCorner.Parent = depositButton
+	Feature._trackInstance(btnCorner)
+
+	local btnOutline = Instance.new("UIStroke")
+	btnOutline.Name = "ButtonOutline"
+	btnOutline.Color = Color3.fromRGB(255, 255, 255)
+	btnOutline.Thickness = 1
+	btnOutline.Transparency = 0.5
+	btnOutline.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	btnOutline.Parent = depositButton
+	Feature._trackInstance(btnOutline)
+	Feature._btnOutline = btnOutline
+
+	local depositLabel = Instance.new("TextLabel")
+	depositLabel.Name = "DepositLabel"
+	depositLabel.Size = UDim2.new(1, 0, 0, 15)
+	depositLabel.Position = UDim2.new(0, 0, 1, 2)
+	depositLabel.BackgroundTransparency = 1
+	depositLabel.Text = "deposit"
+	depositLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+	depositLabel.TextSize = 10
+	depositLabel.Font = Enum.Font.Gotham
+	depositLabel.TextXAlignment = Enum.TextXAlignment.Center
+	depositLabel.Parent = mainFrame
+	Feature._trackInstance(depositLabel)
+
+	Feature._trackConnection(depositButton.MouseButton1Click:Connect(function()
+		Feature._toggleAutoDeposit()
+	end))
+
+	Feature._setupDragging()
+	Feature._updateButtonState(false)
+end
+
+-- ============================================
+-- ENABLE
+-- ============================================
+
+function Feature.enable()
+	Feature.cleanup()
+
+	Feature._generation += 1
+	Feature._enabled = true
+	Feature._isDepositing = false
+	Feature._player = Feature._players.LocalPlayer
+
+	if not Feature._player then
+		Feature._enabled = false
+		Feature.cleanup()
+		return
+	end
+
+	local zapSuccess, zap = pcall(function()
+		return require(Feature._replicatedStorage.Client.ClientRemotes)
+	end)
+
+	local interactionsSuccess, interactions = pcall(function()
+		return require(Feature._replicatedStorage.Client.Systems.Interactions)
+	end)
+
+	if not zapSuccess or not interactionsSuccess then
+		Feature._enabled = false
+		Feature.cleanup()
+		return
+	end
+
+	Feature._zap = zap
+	Feature._interactions = interactions
+
+	Feature._createGUI()
+
+	Feature._trackConnection(Feature._userInputService.InputBegan:Connect(function(input, gameProcessed)
+		if not Feature._enabled or gameProcessed then
+			return
+		end
+
+		if input.KeyCode == Feature._config.TOGGLE_KEY then
+			Feature._toggleAutoDeposit()
+		end
+	end))
+end
+
+-- ============================================
+-- DISABLE
+-- ============================================
+
+function Feature.disable()
+	Feature._enabled = false
+	Feature._isDepositing = false
+	Feature.cleanup()
+end
+
+-- ============================================
+-- IS ENABLED
+-- ============================================
+
+function Feature.isEnabled()
+	return Feature._enabled
+end
+
+-- ============================================
+-- CLEANUP
+-- ============================================
+
+function Feature.cleanup()
+	Feature._enabled = false
+	Feature._isDepositing = false
+	Feature._generation += 1
+
+	for _, connection in ipairs(Feature._connections) do
+		Feature._safeDisconnect(connection)
+	end
+
+	for _, taskHandle in ipairs(Feature._tasks) do
+		Feature._safeCancel(taskHandle)
+	end
+
+	for _, instance in ipairs(Feature._instances) do
+		Feature._safeDestroy(instance)
+	end
+
+	table.clear(Feature._connections)
+	table.clear(Feature._instances)
+	table.clear(Feature._tasks)
+
+	Feature._player = nil
+	Feature._zap = nil
+	Feature._interactions = nil
+	Feature._gui = nil
+	Feature._mainFrame = nil
+	Feature._depositButton = nil
+	Feature._btnOutline = nil
+	Feature._mainOutline = nil
+end
+
+return Feature
