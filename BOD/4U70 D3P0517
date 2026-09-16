@@ -29,7 +29,7 @@ local Feature = {
 -- ============================================
 
 Feature._config = {
-	DEPOSIT_INTERVAL = 0.1,
+	DEPOSIT_INTERVAL = 0.01,
 	TOGGLE_KEY = Enum.KeyCode.Q,
 }
 
