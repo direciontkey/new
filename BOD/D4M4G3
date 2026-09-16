@@ -1,0 +1,167 @@
+-- ============================================
+-- DAMAGE MOD
+-- ============================================
+
+local Feature = {
+	NAME = "Damage Mod",
+
+	_replicatedStorage = game:GetService("ReplicatedStorage"),
+
+	_enabled = false,
+	_objectsLibrary = nil,
+	_originalDamage = {},
+}
+
+-- ============================================
+-- CONFIG
+-- ============================================
+
+Feature._config = {
+	damage = 500,
+}
+
+-- ============================================
+-- MODULE HELPERS
+-- ============================================
+
+function Feature._getObjectsLibrary()
+	local shared = Feature._replicatedStorage:FindFirstChild("Shared")
+	return shared and shared:FindFirstChild("ObjectsLibrary")
+end
+
+-- ============================================
+-- APPLY DAMAGE
+-- ============================================
+
+function Feature._applyDamage(entry, name)
+	if type(entry) ~= "table" or entry.Damage == nil then
+		return
+	end
+
+	if Feature._originalDamage[name] == nil then
+		Feature._originalDamage[name] = entry.Damage
+	end
+
+	entry.Damage = Feature._config.damage
+end
+
+function Feature._patchObjectsLibrary()
+	local libraryModule = Feature._getObjectsLibrary()
+
+	if not libraryModule then
+		return false
+	end
+
+	local success, library = pcall(require, libraryModule)
+
+	if not success or type(library) ~= "table" then
+		return false
+	end
+
+	if type(library.Objects) ~= "table" then
+		return false
+	end
+
+	Feature._objectsLibrary = library
+
+	local weaponTags = {
+		Firearm = true,
+		ExplosiveLauncher = true,
+		UndeadStaff = true,
+		WizardStaff = true,
+		HandCannon = true,
+		Minigun = true,
+	}
+
+	for name, entry in pairs(library.Objects) do
+		if type(entry) == "table" and type(entry.Tags) == "table" then
+			local isWeapon = false
+
+			for _, tag in ipairs(entry.Tags) do
+				if weaponTags[tag] then
+					isWeapon = true
+					break
+				end
+			end
+
+			if isWeapon then
+				Feature._applyDamage(entry, name)
+
+				if type(entry.Upgrade) == "table" then
+					Feature._applyDamage(entry.Upgrade, name .. ".Upgrade")
+				end
+			end
+		end
+	end
+
+	return true
+end
+
+-- ============================================
+-- RESTORE ORIGINAL DAMAGE
+-- ============================================
+
+function Feature._restoreDamage()
+	if not Feature._objectsLibrary then
+		return
+	end
+
+	local objects = Feature._objectsLibrary.Objects
+
+	if type(objects) ~= "table" then
+		return
+	end
+
+	for name, originalDamage in pairs(Feature._originalDamage) do
+		local entry = objects[name]
+
+		if entry then
+			entry.Damage = originalDamage
+		end
+	end
+end
+
+-- ============================================
+-- ENABLE
+-- ============================================
+
+function Feature.enable()
+	Feature.cleanup()
+
+	Feature._enabled = true
+
+	Feature._patchObjectsLibrary()
+end
+
+-- ============================================
+-- DISABLE
+-- ============================================
+
+function Feature.disable()
+	Feature._enabled = false
+	Feature.cleanup()
+end
+
+-- ============================================
+-- IS ENABLED
+-- ============================================
+
+function Feature.isEnabled()
+	return Feature._enabled
+end
+
+-- ============================================
+-- CLEANUP
+-- ============================================
+
+function Feature.cleanup()
+	Feature._enabled = false
+
+	Feature._restoreDamage()
+
+	Feature._objectsLibrary = nil
+
+	table.clear(Feature._originalDamage)
+end
+
+return Feature
