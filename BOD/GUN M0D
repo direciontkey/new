@@ -25,7 +25,6 @@ local Feature = {
 		FR = {},
 		RD = {},
 		SP = {},
-		DMG = {},
 	},
 }
 
@@ -35,7 +34,6 @@ local Feature = {
 
 Feature._config = {
 	fireRate = 0.02,
-	damage = 500,
 	zeroRecoil = true,
 	zeroSpread = true,
 	zeroReload = true,
@@ -237,10 +235,6 @@ function Feature._applyToEntry(entry, name)
 		original.RD[name] = entry.ReloadDuration
 	end
 
-	if original.DMG[name] == nil and entry.Damage ~= nil then
-		original.DMG[name] = entry.Damage
-	end
-
 	if original.SP[name] == nil and type(entry.SpreadParams) == "table" then
 		original.SP[name] = {
 			SpreadX = entry.SpreadParams.SpreadX,
@@ -258,10 +252,6 @@ function Feature._applyToEntry(entry, name)
 
 	if Feature._config.zeroReload and entry.ReloadDuration ~= nil then
 		entry.ReloadDuration = 0
-	end
-
-	if Feature._config.damage and entry.Damage ~= nil then
-		entry.Damage = Feature._config.damage
 	end
 
 	if Feature._config.zeroSpread and type(entry.SpreadParams) == "table" then
@@ -359,14 +349,6 @@ function Feature._restoreObjectsLibrary()
 
 		if entry then
 			entry.ReloadDuration = value
-		end
-	end
-
-	for name, value in pairs(original.DMG) do
-		local entry = objects[name]
-
-		if entry then
-			entry.Damage = value
 		end
 	end
 
@@ -472,7 +454,6 @@ function Feature.cleanup()
 	table.clear(Feature._original.FR)
 	table.clear(Feature._original.RD)
 	table.clear(Feature._original.SP)
-	table.clear(Feature._original.DMG)
 end
 
 return Feature
