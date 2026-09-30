@@ -1,7 +1,7 @@
 -- ============================================
 -- FEATURE
 -- COAL BOXES, TURRET CRATES, WEAPONS CRATES,
--- WRENCHES
+-- TRAIN CRATES, WRENCHES
 -- ============================================
 
 local Feature = {}
@@ -29,55 +29,59 @@ Feature._maxDistanceSquared =
 
 Feature._highlightConfig = {
     CoalBox = {
-        Color = Color3.fromRGB(255, 165, 0),
+        Color = Color3.fromRGB(255, 140, 0),
         FillTransparency = 0.3,
-        OutlineColor = Color3.fromRGB(255, 200, 100),
+        OutlineColor = Color3.fromRGB(255, 200, 80),
         OutlineTransparency = 0.2,
         Label = "Coal",
     },
 
     TurretCrate = {
-        Color = Color3.fromRGB(255, 255, 0),
+        Color = Color3.fromRGB(255, 230, 0),
         FillTransparency = 0.3,
-        OutlineColor = Color3.fromRGB(255, 255, 100),
+        OutlineColor = Color3.fromRGB(255, 255, 120),
         OutlineTransparency = 0.2,
         Label = "Turret",
     },
 
     WeaponsCrate = {
-        Color = Color3.fromRGB(0, 255, 0),
+        Color = Color3.fromRGB(150, 150, 150),
         FillTransparency = 0.3,
-        OutlineColor = Color3.fromRGB(100, 255, 100),
+        OutlineColor = Color3.fromRGB(220, 220, 220),
         OutlineTransparency = 0.2,
         Label = "Weapons",
     },
 
-    WrenchCollect = {
-        Color = Color3.fromRGB(255, 0, 0),
+    TrainCrate = {
+        Color = Color3.fromRGB(0, 140, 255),
         FillTransparency = 0.3,
-        OutlineColor = Color3.fromRGB(255, 100, 100),
+        OutlineColor = Color3.fromRGB(100, 200, 255),
+        OutlineTransparency = 0.2,
+        Label = "Train",
+    },
+
+    WrenchCollect = {
+        Color = Color3.fromRGB(255, 40, 40),
+        FillTransparency = 0.3,
+        OutlineColor = Color3.fromRGB(255, 130, 130),
         OutlineTransparency = 0.2,
         Label = "Wrench",
     },
 }
-
 -- ============================================
 -- STATE
 -- ============================================
 
 Feature._enabled = false
 Feature._generation = 0
-
 Feature._connections = {}
 Feature._instances = {}
 Feature._tasks = {}
-
 Feature._trackedObjects = {}
 Feature._espObjects = {}
 Feature._monitoredObjects = {}
 Feature._monitoredChunks = {}
 Feature._loadedChunks = {}
-
 Feature._player = nil
 Feature._character = nil
 Feature._rootPart = nil
@@ -114,7 +118,6 @@ local function trackConnection(connection)
     if connection then
         table.insert(Feature._connections, connection)
     end
-
     return connection
 end
 
@@ -122,7 +125,6 @@ local function trackInstance(instance)
     if instance then
         table.insert(Feature._instances, instance)
     end
-
     return instance
 end
 
@@ -130,7 +132,6 @@ local function trackTask(taskObject)
     if taskObject then
         table.insert(Feature._tasks, taskObject)
     end
-
     return taskObject
 end
 
@@ -138,7 +139,6 @@ local function disconnectAllConnections()
     for _, connection in ipairs(Feature._connections) do
         safeDisconnect(connection)
     end
-
     table.clear(Feature._connections)
 end
 
@@ -146,7 +146,6 @@ local function cancelAllTasks()
     for _, taskObject in ipairs(Feature._tasks) do
         safeCancel(taskObject)
     end
-
     table.clear(Feature._tasks)
 end
 
@@ -154,7 +153,6 @@ local function destroyAllInstances()
     for _, instance in ipairs(Feature._instances) do
         safeDestroy(instance)
     end
-
     table.clear(Feature._instances)
 end
 
@@ -164,13 +162,11 @@ end
 
 local function getRootPart()
     local player = Feature._player
-
     if not player then
         return nil
     end
 
     local character = player.Character
-
     if character ~= Feature._character then
         Feature._character = character
         Feature._rootPart = nil
@@ -185,7 +181,6 @@ local function getRootPart()
     end
 
     local rootPart = character:FindFirstChild("HumanoidRootPart")
-
     if rootPart and rootPart:IsA("BasePart") then
         Feature._rootPart = rootPart
         return rootPart
@@ -209,7 +204,6 @@ local function getObjectPosition(obj)
         end
 
         local part = obj:FindFirstChildWhichIsA("BasePart", true)
-
         if part then
             return part.Position
         end
@@ -254,6 +248,10 @@ local function getObjectType(obj)
         return "WeaponsCrate"
     end
 
+    if name == "TrainCrate" then
+        return "TrainCrate"
+    end
+
     if name == "WrenchCollect" and obj:IsA("BasePart") then
         return "WrenchCollect"
     end
@@ -271,7 +269,6 @@ local function getCoalsFolder(coalBox)
     end
 
     local folder = coalBox:FindFirstChild("Coals")
-
     if folder then
         return folder
     end
@@ -281,7 +278,6 @@ end
 
 local function hasCoals(coalBox)
     local coalsFolder = getCoalsFolder(coalBox)
-
     if not coalsFolder then
         return false
     end
@@ -290,7 +286,6 @@ local function hasCoals(coalBox)
         if child:IsA("BasePart")
             and child.Name:match("^Coal_%d+$")
             and child.Transparency < 0.9 then
-
             return true
         end
     end
@@ -308,7 +303,6 @@ local function hasLid(crate)
     end
 
     local lid = crate:FindFirstChild("Lid")
-
     if not lid or not lid:IsA("BasePart") then
         return false
     end
@@ -326,8 +320,8 @@ local function isValidObject(obj, objType)
     end
 
     if objType == "TurretCrate"
-        or objType == "WeaponsCrate" then
-
+        or objType == "WeaponsCrate"
+        or objType == "TrainCrate" then
         return hasLid(obj)
     end
 
@@ -352,18 +346,15 @@ local function createBillboard(obj, config)
     end
 
     local billboard = Instance.new("BillboardGui")
-
     billboard.Name = "ESP_Billboard"
     billboard.Adornee = obj
     billboard.Size = UDim2.new(0, 100, 0, 20)
     billboard.StudsOffset = Vector3.new(0, 3.5, 0)
     billboard.AlwaysOnTop = true
     billboard.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-
     trackInstance(billboard)
 
     local label = Instance.new("TextLabel")
-
     label.Name = "ESP_Label"
     label.Size = UDim2.new(1, 0, 1, 0)
     label.BackgroundTransparency = 1
@@ -374,11 +365,9 @@ local function createBillboard(obj, config)
     label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
     label.Font = Enum.Font.SourceSansBold
     label.Parent = billboard
-
     trackInstance(label)
 
     billboard.Parent = obj
-
     return billboard
 end
 
@@ -396,13 +385,11 @@ local function createESP(obj, objType)
     end
 
     local config = Feature._highlightConfig[objType]
-
     if not config then
         return
     end
 
     local highlight = Instance.new("Highlight")
-
     highlight.Name = "ESP_Highlight"
     highlight.Adornee = obj
     highlight.FillColor = config.Color
@@ -410,11 +397,9 @@ local function createESP(obj, objType)
     highlight.OutlineColor = config.OutlineColor
     highlight.OutlineTransparency = config.OutlineTransparency
     highlight.Parent = obj
-
     trackInstance(highlight)
 
     local billboard = createBillboard(obj, config)
-
     if not billboard then
         safeDestroy(highlight)
         return
@@ -429,7 +414,6 @@ end
 
 local function removeESP(obj)
     local data = Feature._espObjects[obj]
-
     if not data then
         return
     end
@@ -457,7 +441,6 @@ end
 
 local function disconnectObjectMonitoring(obj)
     local data = Feature._monitoredObjects[obj]
-
     if not data then
         return
     end
@@ -471,7 +454,6 @@ end
 
 local function updateTrackedState(obj)
     local data = Feature._trackedObjects[obj]
-
     if not data then
         return
     end
@@ -533,7 +515,6 @@ local function monitorCoalBox(coalBox, generation)
                 if not isCurrent() then
                     return
                 end
-
                 updateTrackedState(coalBox)
             end)
         )
@@ -567,7 +548,6 @@ local function monitorCoalBox(coalBox, generation)
                     if not isCurrent() then
                         return
                     end
-
                     if coalBox.Parent then
                         updateTrackedState(coalBox)
                     end
@@ -586,7 +566,6 @@ local function monitorCoalBox(coalBox, generation)
                     if not isCurrent() then
                         return
                     end
-
                     if coalBox.Parent then
                         updateTrackedState(coalBox)
                     end
@@ -596,7 +575,6 @@ local function monitorCoalBox(coalBox, generation)
     end
 
     local coalsFolder = getCoalsFolder(coalBox)
-
     if coalsFolder then
         monitorCoalsFolder(coalsFolder)
     end
@@ -615,7 +593,6 @@ local function monitorCoalBox(coalBox, generation)
                     if not isCurrent() then
                         return
                     end
-
                     if coalBox.Parent then
                         updateTrackedState(coalBox)
                     end
@@ -636,7 +613,6 @@ local function monitorCoalBox(coalBox, generation)
                     if not isCurrent() then
                         return
                     end
-
                     if coalBox.Parent then
                         updateTrackedState(coalBox)
                     end
@@ -679,9 +655,9 @@ local function monitorCrate(crate, generation)
     end
 
     local objectType = getObjectType(crate)
-
     if objectType ~= "TurretCrate"
-        and objectType ~= "WeaponsCrate" then
+        and objectType ~= "WeaponsCrate"
+        and objectType ~= "TrainCrate" then
         return
     end
 
@@ -713,14 +689,12 @@ local function monitorCrate(crate, generation)
                 if not isCurrent() then
                     return
                 end
-
                 updateTrackedState(crate)
             end)
         )
     end
 
     local lid = crate:FindFirstChild("Lid")
-
     if lid then
         monitorLid(lid)
     end
@@ -734,7 +708,6 @@ local function monitorCrate(crate, generation)
 
             if child.Name == "Lid"
                 and child:IsA("BasePart") then
-
                 monitorLid(child)
                 updateTrackedState(crate)
             end
@@ -753,7 +726,6 @@ local function monitorCrate(crate, generation)
                     if not isCurrent() then
                         return
                     end
-
                     if crate.Parent then
                         updateTrackedState(crate)
                     end
@@ -791,7 +763,6 @@ local function monitorWrench(wrench, generation)
         or not wrench.Parent
         or not wrench:IsA("BasePart")
         or Feature._monitoredObjects[wrench] then
-
         return
     end
 
@@ -841,7 +812,6 @@ local function registerObject(obj, generation)
     end
 
     local objectType = getObjectType(obj)
-
     if not objectType then
         return
     end
@@ -849,7 +819,8 @@ local function registerObject(obj, generation)
     if objectType == "CoalBox" then
         monitorCoalBox(obj, generation)
     elseif objectType == "TurretCrate"
-        or objectType == "WeaponsCrate" then
+        or objectType == "WeaponsCrate"
+        or objectType == "TrainCrate" then
         monitorCrate(obj, generation)
     elseif objectType == "WrenchCollect" then
         monitorWrench(obj, generation)
@@ -876,7 +847,6 @@ local function clearChunk(chunk)
     end
 
     local connections = Feature._monitoredChunks[chunk]
-
     if connections then
         for _, connection in ipairs(connections) do
             safeDisconnect(connection)
@@ -888,7 +858,6 @@ local function clearChunk(chunk)
 
     for obj in pairs(Feature._trackedObjects) do
         local isDescendant = false
-
         pcall(function()
             isDescendant = obj:IsDescendantOf(chunk)
         end)
@@ -900,7 +869,6 @@ local function clearChunk(chunk)
 
     for obj in pairs(Feature._espObjects) do
         local isDescendant = false
-
         pcall(function()
             isDescendant = obj:IsDescendantOf(chunk)
         end)
@@ -932,12 +900,10 @@ local function scanChunk(chunk, generation)
             or generation ~= Feature._generation then
             return
         end
-
         registerObject(descendant, generation)
     end
 
     local connections = {}
-
     Feature._monitoredChunks[chunk] = connections
 
     table.insert(
@@ -947,7 +913,6 @@ local function scanChunk(chunk, generation)
                 or generation ~= Feature._generation then
                 return
             end
-
             registerObject(descendant, generation)
         end)
     )
@@ -996,7 +961,6 @@ local function scanLoadedChunks(container, generation)
             or generation ~= Feature._generation then
             return
         end
-
         scanChunk(chunk, generation)
     end
 end
@@ -1011,7 +975,6 @@ local function startUpdateLoop(generation)
             and generation == Feature._generation do
 
             local rootPart = getRootPart()
-
             if rootPart then
                 local playerPosition = rootPart.Position
 
@@ -1035,7 +998,6 @@ local function startUpdateLoop(generation)
                     data.Valid = true
 
                     local position = getObjectPosition(target)
-
                     if not position then
                         removeESP(target)
                         continue
@@ -1106,9 +1068,7 @@ function Feature.enable()
     Feature._generation = Feature._generation + 1
 
     local generation = Feature._generation
-
     Feature._player = Feature._players.LocalPlayer
-
     if not Feature._player then
         Feature._enabled = false
         return
@@ -1155,7 +1115,6 @@ function Feature.enable()
                     or generation ~= Feature._generation then
                     return
                 end
-
                 scanChunk(chunk, generation)
             end)
         )
@@ -1166,7 +1125,6 @@ function Feature.enable()
                     or generation ~= Feature._generation then
                     return
                 end
-
                 clearChunk(chunk)
             end)
         )
@@ -1178,7 +1136,6 @@ function Feature.enable()
                 or generation ~= Feature._generation then
                 return
             end
-
             registerObject(descendant, generation)
         end
 
@@ -1188,7 +1145,6 @@ function Feature.enable()
                     or generation ~= Feature._generation then
                     return
                 end
-
                 registerObject(descendant, generation)
             end)
         )
@@ -1218,7 +1174,6 @@ function Feature.disable()
     if not Feature._enabled then
         return
     end
-
     Feature.cleanup()
 end
 
