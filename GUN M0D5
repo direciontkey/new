@@ -222,15 +222,15 @@ end
 -- SAVE ORIGINAL SETTINGS
 -- ============================================
 
-function Feature._saveOriginal(config, isEclipse)
+function Feature._saveOriginal(config, isBlaster)
 	if Feature._originalModules[config] then
 		return
 	end
 
 	local snapshot = {}
 
-	if isEclipse then
-		snapshot.ExplosionRadius = config.ExplosionRadius.ExplosionKnockbackPower
+	if isBlaster then
+		snapshot.ExplosionRadius = config.ExplosionRadius
 		snapshot.Range = config.Range
 		snapshot.Lifetime = config.Lifetime
 		snapshot.CameraRecoilingEnabled = config.CameraRecoilingEnabled
@@ -272,13 +272,12 @@ function Feature._modifyConfig(config, gunName)
 		return
 	end
 
-	local isEclipse = gunName == "Blaster"
+	local isBlaster = gunName == "Blaster"
 
-	Feature._saveOriginal(config, isEclipse)
+	Feature._saveOriginal(config, isBlaster)
 
-	if isEclipse then
-		config.ExplosionRadius = 30
-
+	if isBlaster then
+		config.ExplosionRadius = 20
 		config.Range = 9999
 		config.Lifetime = 60
 
