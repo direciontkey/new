@@ -230,6 +230,7 @@ function Feature._saveOriginal(config, isBlaster)
 	local snapshot = {}
 
 	if isBlaster then
+		snapshot.Auto = config.Auto
 		snapshot.FireRate = config.FireRate
 		snapshot.FireRates = type(config.FireRates) == "table" and table.clone(config.FireRates) or config.FireRates
 		snapshot.FireModes = type(config.FireModes) == "table" and table.clone(config.FireModes) or config.FireModes
@@ -282,6 +283,7 @@ function Feature._modifyConfig(config, gunName)
 	Feature._saveOriginal(config, isBlaster)
 
 	if isBlaster then
+		config.Auto = true
 		config.FireRate = 0.05
 		config.SelectiveFireEnabled = false
 		config.FireModes = { 1 }
