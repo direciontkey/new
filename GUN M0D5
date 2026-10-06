@@ -230,6 +230,7 @@ function Feature._saveOriginal(config, isBlaster)
 	local snapshot = {}
 
 	if isBlaster then
+		snapshot.FireRate = config.FireRate
 		snapshot.ExplosionRadius = config.ExplosionRadius
 		snapshot.Range = config.Range
 		snapshot.Lifetime = config.Lifetime
@@ -277,7 +278,8 @@ function Feature._modifyConfig(config, gunName)
 	Feature._saveOriginal(config, isBlaster)
 
 	if isBlaster then
-		config.ExplosionRadius = 20
+		config.FireRate = 0.2
+		config.ExplosionRadius = 30
 		config.Range = 9999
 		config.Lifetime = 60
 
