@@ -231,6 +231,10 @@ function Feature._saveOriginal(config, isBlaster)
 
 	if isBlaster then
 		snapshot.FireRate = config.FireRate
+		snapshot.FireRates = type(config.FireRates) == "table" and table.clone(config.FireRates) or config.FireRates
+		snapshot.FireModes = type(config.FireModes) == "table" and table.clone(config.FireModes) or config.FireModes
+		snapshot.BurstRates = type(config.BurstRates) == "table" and table.clone(config.BurstRates) or config.BurstRates
+		snapshot.SelectiveFireEnabled = config.SelectiveFireEnabled
 		snapshot.ExplosionRadius = config.ExplosionRadius
 		snapshot.Range = config.Range
 		snapshot.Lifetime = config.Lifetime
@@ -278,8 +282,12 @@ function Feature._modifyConfig(config, gunName)
 	Feature._saveOriginal(config, isBlaster)
 
 	if isBlaster then
-		config.FireRate = 0.2
-		config.ExplosionRadius = 30
+		config.FireRate = 0.05
+		config.SelectiveFireEnabled = false
+		config.FireModes = { 1 }
+		config.FireRates = { 0.05 }
+		config.BurstRates = { 0 }
+		config.ExplosionRadius = 60
 		config.Range = 9999
 		config.Lifetime = 60
 
