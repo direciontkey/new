@@ -44,7 +44,7 @@ Feature._modifiedStats = {
 	BulletSpeed = 9000,
 	EquippedAnimationID = nil,
 	EquippedAnimationSpeed = 99,
-	ShotgunEnabled = true,
+	SniperEnabled = false,
 
 	Ammo = math.huge,
 	MaxAmmo = math.huge,
