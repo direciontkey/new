@@ -47,6 +47,7 @@ Feature._modifiedStats = {
 	SniperEnabled = false,
     DelayBeforeFiring = 0,
     DelayAfterFiring = 0,
+    ChargingTime = 0,
 
 	Ammo = math.huge,
 	MaxAmmo = math.huge,
