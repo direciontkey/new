@@ -45,6 +45,8 @@ Feature._modifiedStats = {
 	EquippedAnimationID = nil,
 	EquippedAnimationSpeed = 99,
 	SniperEnabled = false,
+    DelayBeforeFiring = 0,
+    DelayAfterFiring = 0,
 
 	Ammo = math.huge,
 	MaxAmmo = math.huge,
