@@ -1,0 +1,1895 @@
+-- ============================================================
+-- FEATURE MANAGER
+-- ============================================================
+
+-- ================================
+-- Services
+-- ================================
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local ContextActionService = game:GetService("ContextActionService")
+local TweenService = game:GetService("TweenService")
+local HttpService = game:GetService("HttpService")
+
+-- ================================
+-- Player
+-- ================================
+local Player = Players.LocalPlayer
+local PlayerGui = Player:WaitForChild("PlayerGui")
+
+-- ============================================================
+-- Core Manager Configuration
+-- ============================================================
+
+local CORE_URLS = {
+	ThemeManager = "https://raw.githubusercontent.com/direciontkey/new/refs/heads/main/THEMEM",
+	SaveManager = "https://raw.githubusercontent.com/direciontkey/new/refs/heads/main/SAVEM",
+}
+
+-- ============================================================
+-- Window Settings
+-- ============================================================
+
+local WINDOW_SIZE = Vector2.new(420, 340)
+local MIN_WINDOW_SIZE = Vector2.new(300, 242)
+local HEADER_HEIGHT = 39
+local MAIN_PADDING = 12
+local HEADER_GAP = 12
+local FEATURE_HEIGHT = 35
+local FEATURE_GAP = 8
+local FEATURE_INTERNAL_PADDING = 10
+local CIRCLE_SIZE = 20
+local CIRCLE_GAP = 12
+local CIRCLE_BUTTON_SIZE = UDim2.fromOffset(CIRCLE_SIZE, CIRCLE_SIZE)
+local RESIZE_ZONE_SIZE = MAIN_PADDING
+local RESIZE_CORNER_SIZE = MAIN_PADDING
+local DRAG_THRESHOLD = 4
+
+-- ============================================================
+-- Theme Window Settings
+-- ============================================================
+
+local THEME_WINDOW_WIDTH = 142.5
+local THEME_ITEM_HEIGHT = 35
+local THEME_ITEM_GAP = 8
+local THEME_WINDOW_PADDING = 10
+local DOUBLE_CLICK_TIME = 0.3
+local THEME_TWEEN_INFO = TweenInfo.new(0.25, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+
+-- ============================================================
+-- Toggle Popup Settings
+-- ============================================================
+
+local POPUP_SIZE = FEATURE_HEIGHT
+
+-- ============================================================
+-- Feature Configuration
+-- ============================================================
+
+local SHARED_FEATURE_URLS = {
+	"https://raw.githubusercontent.com/direciontkey/new/refs/heads/main/41MB07",
+	"https://raw.githubusercontent.com/direciontkey/new/refs/heads/main/GUN%20M0D5",
+	"https://raw.githubusercontent.com/direciontkey/new/refs/heads/main/M0N573R%2035P",
+	"https://raw.githubusercontent.com/direciontkey/new/refs/heads/main/D1574NC3%2035P",
+	"https://raw.githubusercontent.com/direciontkey/new/refs/heads/main/D3LE73%207R335",
+	"https://raw.githubusercontent.com/direciontkey/new/refs/heads/main/57YL3",
+	"https://raw.githubusercontent.com/direciontkey/new/refs/heads/main/FL0A7",
+}
+
+local SHARED_FEATURE_ROWS = {
+	{1},
+	{2},
+	{3, 4},
+	{5},
+	{6, 7},
+}
+
+local PLACE_CONFIGS = {
+	[135597952046626] = {
+		FEATURE_URLS = {
+			"https://raw.githubusercontent.com/direciontkey/new/refs/heads/main/4U70%20C0LL3C7",
+			"https://raw.githubusercontent.com/direciontkey/new/refs/heads/main/173M%2035P",
+			"https://raw.githubusercontent.com/direciontkey/new/refs/heads/main/M0N573R%2035P",
+			"https://raw.githubusercontent.com/direciontkey/new/refs/heads/main/D1574NC3%2035P",
+			"https://raw.githubusercontent.com/direciontkey/new/refs/heads/main/41MB07",
+			"https://raw.githubusercontent.com/direciontkey/new/refs/heads/main/GUN%20M0D5",
+			"https://raw.githubusercontent.com/direciontkey/new/refs/heads/main/D3L37%20D3C0R",
+			"https://raw.githubusercontent.com/direciontkey/new/refs/heads/main/F1R3PL4C3%207P",
+			"https://raw.githubusercontent.com/direciontkey/new/refs/heads/main/57YL3",
+			"https://raw.githubusercontent.com/direciontkey/new/refs/heads/main/FL0A7",
+		},
+		FeatureRows = {
+			{1},
+			{2},
+			{3},
+			{4},
+			{5, 6},
+			{7, 8},
+			{9, 10},
+		},
+	},
+	[115286378269814] = {
+		FEATURE_URLS = SHARED_FEATURE_URLS,
+		FeatureRows = SHARED_FEATURE_ROWS,
+	},
+	[129028588391526] = {
+		FEATURE_URLS = SHARED_FEATURE_URLS,
+		FeatureRows = SHARED_FEATURE_ROWS,
+	},
+	[77925159114839] = {
+		FEATURE_URLS = SHARED_FEATURE_URLS,
+		FeatureRows = SHARED_FEATURE_ROWS,
+	},
+}
+
+local PlaceConfig = PLACE_CONFIGS[game.PlaceId]
+
+if not PlaceConfig then
+	warn("[Feature Manager] Unsupported PlaceId:", game.PlaceId)
+	return
+end
+
+local FEATURE_URLS = PlaceConfig.FEATURE_URLS
+local FeatureRows = PlaceConfig.FeatureRows
+
+-- ============================================================
+-- Helpers
+-- ============================================================
+
+local function new(className, properties)
+	local instance = Instance.new(className)
+	local parent = properties.Parent
+
+	for property, value in pairs(properties) do
+		if property ~= "Parent" then
+			instance[property] = value
+		end
+	end
+
+	instance.Parent = parent
+	return instance
+end
+
+local function corner(parent, scale, maxRadius)
+	local uiCorner = new("UICorner", {Parent = parent})
+	local lastRadius = -1
+
+	local function update()
+		if not parent.Parent then return end
+		local size = parent.AbsoluteSize
+		local shortest = math.min(size.X, size.Y)
+		local radius = math.min(shortest * scale, maxRadius)
+
+		if radius ~= lastRadius then
+			lastRadius = radius
+			uiCorner.CornerRadius = UDim.new(0, radius)
+		end
+	end
+
+	update()
+	parent:GetPropertyChangedSignal("AbsoluteSize"):Connect(update)
+	return uiCorner
+end
+
+local function circle(parent)
+	return new("UICorner", {CornerRadius = UDim.new(1, 0), Parent = parent})
+end
+
+local MOUSE_BUTTON_1 = Enum.UserInputType.MouseButton1
+local TOUCH = Enum.UserInputType.Touch
+local MOUSE_MOVEMENT = Enum.UserInputType.MouseMovement
+
+local function isPrimaryInput(input)
+	local inputType = input.UserInputType
+	return inputType == MOUSE_BUTTON_1 or inputType == TOUCH
+end
+
+local function isMoveInput(input)
+	local inputType = input.UserInputType
+	return inputType == MOUSE_MOVEMENT or inputType == TOUCH
+end
+
+-- ============================================================
+-- Core Manager Loader
+-- ============================================================
+
+local function loadCoreManager(name, url)
+	if type(url) ~= "string" or url == "" then
+		warn("[Feature Manager] " .. name .. " URL is empty")
+		return nil
+	end
+
+	local success, result = pcall(function()
+		local source = game:HttpGet(url)
+		if type(source) ~= "string" or source == "" then error("Remote source is empty") end
+
+		local loader = loadstring(source)
+		if not loader then error("loadstring returned nil") end
+
+		return loader()
+	end)
+
+	if not success then
+		warn("[Feature Manager] Failed to load " .. name .. ":", result)
+		return nil
+	end
+
+	if type(result) ~= "table" then
+		warn("[Feature Manager] " .. name .. " did not return a table")
+		return nil
+	end
+
+	return result
+end
+
+-- ============================================================
+-- Theme Manager
+-- ============================================================
+
+local ThemeManager = loadCoreManager("ThemeManager", CORE_URLS.ThemeManager)
+
+if not ThemeManager then
+	warn("[Feature Manager] Unable to start without ThemeManager")
+	return
+end
+
+local THEME_MANAGER_REQUIRED_METHODS = {
+	"getTheme",
+	"getThemeNames",
+	"getInitialTheme",
+	"applyTheme",
+	"getCurrentThemeName",
+}
+
+for _, methodName in ipairs(THEME_MANAGER_REQUIRED_METHODS) do
+	if type(ThemeManager[methodName]) ~= "function" then
+		warn("[Feature Manager] ThemeManager is missing " .. methodName .. "()")
+		return
+	end
+end
+
+-- ============================================================
+-- Save Manager
+-- ============================================================
+
+local SaveManager = loadCoreManager("SaveManager", CORE_URLS.SaveManager)
+
+if not SaveManager then
+	warn("[Feature Manager] Unable to start without SaveManager")
+	return
+end
+
+local SAVE_MANAGER_REQUIRED_METHODS = {
+	"SetWindow",
+	"Save",
+	"LoadAutoloadConfig",
+}
+
+for _, methodName in ipairs(SAVE_MANAGER_REQUIRED_METHODS) do
+	if type(SaveManager[methodName]) ~= "function" then
+		warn("[Feature Manager] SaveManager is missing " .. methodName .. "()")
+		return
+	end
+end
+
+-- ============================================================
+-- Unified Tap Detection
+-- ============================================================
+
+local function connectTap(button, callback, doubleCallback)
+	local activeInput = nil
+	local startPosition = nil
+	local moved = false
+	local lastTapTime = 0
+
+	button.InputBegan:Connect(function(input)
+		if not isPrimaryInput(input) then return end
+		if activeInput then return end
+
+		activeInput = input
+		startPosition = input.Position
+		moved = false
+	end)
+
+	UserInputService.InputChanged:Connect(function(input)
+		if not activeInput then return end
+
+		local shouldTrack = false
+
+		if activeInput.UserInputType == TOUCH then
+			shouldTrack = input == activeInput
+		else
+			shouldTrack = input.UserInputType == MOUSE_MOVEMENT
+		end
+
+		if not shouldTrack then return end
+
+		local delta = input.Position - startPosition
+
+		if math.abs(delta.X) > DRAG_THRESHOLD or math.abs(delta.Y) > DRAG_THRESHOLD then
+			moved = true
+		end
+	end)
+
+	UserInputService.InputEnded:Connect(function(input)
+		if input ~= activeInput then return end
+
+		activeInput = nil
+		if moved then return end
+
+		local now = os.clock()
+
+		if doubleCallback and now - lastTapTime <= DOUBLE_CLICK_TIME then
+			lastTapTime = 0
+			doubleCallback()
+		else
+			lastTapTime = now
+		end
+
+		if callback then callback() end
+	end)
+end
+
+-- ============================================================
+-- Feature Manager
+-- ============================================================
+
+local Features = {}
+
+local FEATURE_REQUIRED_METHODS = {
+	"enable",
+	"disable",
+	"isEnabled",
+	"cleanup",
+}
+
+local function validateFeature(feature)
+	if type(feature) ~= "table" then
+		return false, "Module did not return a table"
+	end
+
+	if type(feature.NAME) ~= "string" or feature.NAME == "" then
+		return false, "Missing Feature.NAME"
+	end
+
+	for _, methodName in ipairs(FEATURE_REQUIRED_METHODS) do
+		if type(feature[methodName]) ~= "function" then
+			return false, "Missing Feature." .. methodName .. "()"
+		end
+	end
+
+	return true
+end
+
+local function loadFeature(url, index)
+	local success, result = pcall(function()
+		local source = game:HttpGet(url)
+		local loader = loadstring(source)
+
+		if not loader then error("loadstring returned nil") end
+		return loader()
+	end)
+
+	if not success then
+		warn("[Feature Manager] Failed to load feature " .. index .. ":", result)
+		return nil
+	end
+
+	local valid, errorMessage = validateFeature(result)
+
+	if not valid then
+		warn("[Feature Manager] Invalid feature " .. index .. ":", errorMessage)
+		return nil
+	end
+
+	return result
+end
+
+for index, url in ipairs(FEATURE_URLS) do
+	local feature = loadFeature(url, index)
+	if feature then Features[index] = feature end
+end
+
+-- ============================================================
+-- Register Features With Save Manager
+-- ============================================================
+
+if type(SaveManager.SetFeatures) == "function" then
+	local success, errorMessage = pcall(function()
+		SaveManager:SetFeatures(Features)
+	end)
+
+	if not success then
+		warn("[Feature Manager] Failed to register features with SaveManager:", errorMessage)
+	end
+end
+
+-- ============================================================
+-- ScreenGui
+-- ============================================================
+
+local ScreenGui = new("ScreenGui", {
+	Name = "FeatureManager",
+	ResetOnSpawn = false,
+	ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+	Parent = PlayerGui,
+})
+
+-- ============================================================
+-- Initial Theme
+-- ============================================================
+
+local InitialThemeName, InitialTheme = ThemeManager:getInitialTheme()
+
+if not InitialThemeName or not InitialTheme then
+	warn("[Feature Manager] ThemeManager returned no usable initial theme")
+	ScreenGui:Destroy()
+	return
+end
+
+local CurrentThemeName = InitialThemeName
+local Theme = InitialTheme
+
+-- ============================================================
+-- Main Window
+-- ============================================================
+
+local Main = new("Frame", {
+	Name = "Main",
+	Size = UDim2.fromOffset(WINDOW_SIZE.X, WINDOW_SIZE.Y),
+	Position = UDim2.new(0.5, -WINDOW_SIZE.X / 2, 0.5, -WINDOW_SIZE.Y / 2),
+	BackgroundColor3 = Theme.Window.Background,
+	BorderSizePixel = 0,
+	ClipsDescendants = false,
+	Parent = ScreenGui,
+})
+
+corner(Main, 0.05, 10)
+
+local MainStroke = new("UIStroke", {
+	Color = Theme.Window.Outline,
+	Thickness = 1,
+	Parent = Main,
+})
+
+-- ============================================================
+-- Header
+-- ============================================================
+
+local Header = new("Frame", {
+	Name = "Header",
+	Size = UDim2.new(1, 0, 0, HEADER_HEIGHT),
+	Position = UDim2.fromOffset(0, 0),
+	BackgroundColor3 = Theme.Header.Background,
+	BorderSizePixel = 0,
+	Parent = Main,
+})
+
+corner(Header, 0.25, 10)
+
+local Title = new("TextButton", {
+	Name = "Title",
+	Size = UDim2.new(1, -(CIRCLE_SIZE * 2 + CIRCLE_GAP * 2 + 24), 1, 0),
+	Position = UDim2.fromOffset(12, 0),
+	BackgroundTransparency = 1,
+	Text = "Feature Manager",
+	TextColor3 = Theme.Header.Title,
+	TextSize = 15,
+	Font = Enum.Font.GothamMedium,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextYAlignment = Enum.TextYAlignment.Center,
+	AutoButtonColor = false,
+	Parent = Header,
+})
+
+local CloseButton = new("TextButton", {
+	Name = "Close",
+	Size = CIRCLE_BUTTON_SIZE,
+	Position = UDim2.new(1, -12 - CIRCLE_SIZE, 0.5, -CIRCLE_SIZE / 2),
+	BackgroundColor3 = Color3.fromRGB(239, 68, 68),
+	BorderSizePixel = 0,
+	Text = "",
+	AutoButtonColor = false,
+	Parent = Header,
+})
+
+circle(CloseButton)
+
+local MinimizeButton = new("TextButton", {
+	Name = "Minimize",
+	Size = CIRCLE_BUTTON_SIZE,
+	Position = UDim2.new(1, -12 - CIRCLE_SIZE - CIRCLE_GAP - CIRCLE_SIZE, 0.5, -CIRCLE_SIZE / 2),
+	BackgroundColor3 = Color3.fromRGB(250, 204, 21),
+	BorderSizePixel = 0,
+	Text = "",
+	AutoButtonColor = false,
+	Parent = Header,
+})
+
+circle(MinimizeButton)
+
+-- ============================================================
+-- Content
+-- ============================================================
+
+local Content = new("Frame", {
+	Name = "Content",
+	Position = UDim2.fromOffset(MAIN_PADDING, HEADER_HEIGHT + HEADER_GAP),
+	Size = UDim2.new(1, -(MAIN_PADDING * 2), 1, -(HEADER_HEIGHT + HEADER_GAP + MAIN_PADDING)),
+	BackgroundColor3 = Theme.Content.Background,
+	BorderSizePixel = 0,
+	ClipsDescendants = true,
+	Parent = Main,
+})
+
+corner(Content, 0.15, 8)
+
+-- ============================================================
+-- Feature List
+-- ============================================================
+
+local FeatureList = new("ScrollingFrame", {
+	Name = "FeatureList",
+	Position = UDim2.fromOffset(6, 6),
+	Size = UDim2.new(1, -12, 1, -12),
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	ScrollBarThickness = 0,
+	ScrollingDirection = Enum.ScrollingDirection.Y,
+	CanvasSize = UDim2.fromOffset(0, 0),
+	AutomaticCanvasSize = Enum.AutomaticSize.None,
+	Parent = Content,
+})
+
+new("UIPadding", {
+	PaddingTop = UDim.new(0, 2),
+	PaddingBottom = UDim.new(0, 2),
+	PaddingLeft = UDim.new(0, 2),
+	PaddingRight = UDim.new(0, 2),
+	Parent = FeatureList,
+})
+
+local FeatureListLayout = new("UIListLayout", {
+	FillDirection = Enum.FillDirection.Vertical,
+	HorizontalAlignment = Enum.HorizontalAlignment.Left,
+	VerticalAlignment = Enum.VerticalAlignment.Top,
+	Padding = UDim.new(0, FEATURE_GAP),
+	SortOrder = Enum.SortOrder.LayoutOrder,
+	Parent = FeatureList,
+})
+
+local function updateCanvasSize()
+	FeatureList.CanvasSize = UDim2.fromOffset(0, FeatureListLayout.AbsoluteContentSize.Y + 4)
+end
+
+FeatureListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateCanvasSize)
+
+-- ============================================================
+-- Toggle Animation
+-- ============================================================
+
+local TOGGLE_BURST_INFO = TweenInfo.new(0.12, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+local TOGGLE_OUTER_INFO = TweenInfo.new(0.16, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+local TOGGLE_SETTLE_INFO = TweenInfo.new(0.18, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+
+local INNER_BURST_SIZE = UDim2.fromOffset(20, 20)
+local INNER_ENABLED_SIZE = UDim2.fromOffset(14, 14)
+local INNER_DISABLED_SIZE = UDim2.fromOffset(10, 10)
+
+-- ============================================================
+-- Theme Object References
+-- ============================================================
+
+local ThemeObjects = {
+	FeatureBars = {},
+	Toggles = {},
+	ThemeItems = {},
+	Popups = {},
+}
+
+local FeatureToggleRefreshers = {}
+local spawnTogglePopup
+
+-- ============================================================
+-- IMPORTANT:
+-- Declare these BEFORE applyTheme().
+-- ============================================================
+
+local ThemeWindow
+local ThemeWindowStroke
+local ThemeHeader
+local ThemeHeaderTitle
+local ThemeContent
+local MiniButton
+local MiniButtonStroke
+
+-- ============================================================
+-- Theme Application
+-- ============================================================
+
+local function applyTheme(themeName, saveTheme)
+	local success, result = pcall(function()
+		return ThemeManager:applyTheme(themeName)
+	end)
+
+	if not success then
+		warn("[Feature Manager] Failed to apply theme:", themeName, result)
+		return false
+	end
+
+	local newTheme = result
+
+	if type(newTheme) ~= "table" then
+		local themeSuccess, fetchedTheme = pcall(function()
+			return ThemeManager:getTheme(themeName)
+		end)
+
+		if not themeSuccess or type(fetchedTheme) ~= "table" then
+			warn("[Feature Manager] ThemeManager returned an invalid theme:", themeName)
+			return false
+		end
+
+		newTheme = fetchedTheme
+	end
+
+	Theme = newTheme
+	CurrentThemeName = themeName
+
+	-- ========================================================
+	-- Main Window
+	-- ========================================================
+
+	if Main and Main.Parent then Main.BackgroundColor3 = Theme.Window.Background end
+	if MainStroke and MainStroke.Parent then MainStroke.Color = Theme.Window.Outline end
+
+	-- ========================================================
+	-- Main Header
+	-- ========================================================
+
+	if Header and Header.Parent then Header.BackgroundColor3 = Theme.Header.Background end
+	if Title and Title.Parent then Title.TextColor3 = Theme.Header.Title end
+
+	-- ========================================================
+	-- Main Content
+	-- ========================================================
+
+	if Content and Content.Parent then Content.BackgroundColor3 = Theme.Content.Background end
+
+	-- ========================================================
+	-- Theme Window
+	-- ========================================================
+
+	if ThemeWindow and ThemeWindow.Parent then ThemeWindow.BackgroundColor3 = Theme.Window.Background end
+	if ThemeWindowStroke and ThemeWindowStroke.Parent then ThemeWindowStroke.Color = Theme.Window.Outline end
+	if ThemeHeader and ThemeHeader.Parent then ThemeHeader.BackgroundColor3 = Theme.Header.Background end
+	if ThemeHeaderTitle and ThemeHeaderTitle.Parent then ThemeHeaderTitle.TextColor3 = Theme.Header.Title end
+	if ThemeContent and ThemeContent.Parent then ThemeContent.BackgroundColor3 = Theme.Content.Background end
+
+	-- ========================================================
+	-- Feature Bars
+	-- ========================================================
+
+	for _, data in ipairs(ThemeObjects.FeatureBars) do
+		if data.Bar and data.Bar.Parent then data.Bar.BackgroundColor3 = Theme.FeatureBar.Background end
+		if data.Name and data.Name.Parent then data.Name.TextColor3 = Theme.FeatureBar.Name end
+		if data.Stroke and data.Stroke.Parent then data.Stroke.Color = Theme.FeatureBar.Outline end
+	end
+
+	-- ========================================================
+	-- Toggles
+	-- ========================================================
+
+	for _, data in ipairs(ThemeObjects.Toggles) do
+		if not data.Button or not data.Button.Parent then continue end
+
+		local enabled = false
+		local stateSuccess, stateResult = pcall(function()
+			return data.Feature:isEnabled()
+		end)
+
+		if stateSuccess then enabled = stateResult == true end
+
+		data.Button.BackgroundColor3 = enabled and Theme.CircleToggle.EnabledOuter or Theme.CircleToggle.DisabledOuter
+
+		if data.Inner and data.Inner.Parent then
+			data.Inner.BackgroundColor3 = enabled and Theme.CircleToggle.EnabledInner or Theme.CircleToggle.DisabledInner
+			data.Inner.Size = enabled and INNER_ENABLED_SIZE or INNER_DISABLED_SIZE
+		end
+	end
+
+	-- ========================================================
+	-- Theme Items
+	-- ========================================================
+
+	for _, data in pairs(ThemeObjects.ThemeItems) do
+		if data.Item and data.Item.Parent then
+			data.Item.BackgroundColor3 = Theme.FeatureBar.Background
+			data.Item.TextColor3 = Theme.FeatureBar.Name
+		end
+
+		if data.Stroke and data.Stroke.Parent then data.Stroke.Color = Theme.FeatureBar.Outline end
+	end
+
+	-- ========================================================
+	-- Popups
+	-- ========================================================
+
+	for _, data in pairs(ThemeObjects.Popups) do
+		if data.Frame and data.Frame.Parent then data.Frame.BackgroundColor3 = Theme.FeatureBar.Background end
+		if data.Stroke and data.Stroke.Parent then data.Stroke.Color = Theme.FeatureBar.Outline end
+	end
+
+	-- ========================================================
+	-- Mini Button
+	-- ========================================================
+
+	if MiniButton and MiniButton.Parent then
+		MiniButton.BackgroundColor3 = Theme.Window.Background
+		MiniButton.TextColor3 = Theme.Header.Title
+	end
+
+	if MiniButtonStroke and MiniButtonStroke.Parent then MiniButtonStroke.Color = Theme.Window.Outline end
+
+	-- ========================================================
+	-- Save Current Theme
+	-- ========================================================
+
+	if saveTheme and type(SaveManager.SetTheme) == "function" then
+		local saveThemeSuccess, saveThemeError = pcall(function()
+			SaveManager:SetTheme(CurrentThemeName)
+		end)
+
+		if not saveThemeSuccess then
+			warn("[Feature Manager] Failed to update saved theme:", saveThemeError)
+		end
+	end
+
+	return true
+end
+
+-- ============================================================
+-- Feature Toggle
+-- ============================================================
+
+local function createToggle(parent, feature, featureIndex, onToggleDoubleClick, registerFeatureRefresher, initialState)
+	local ToggleButton = new("TextButton", {
+		Name = "Toggle",
+		Size = CIRCLE_BUTTON_SIZE,
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, -FEATURE_INTERNAL_PADDING, 0.5, 0),
+		BackgroundColor3 = Theme.CircleToggle.DisabledOuter,
+		BorderSizePixel = 0,
+		Text = "",
+		AutoButtonColor = false,
+		Parent = parent,
+	})
+
+	circle(ToggleButton)
+
+	local Inner = new("Frame", {
+		Name = "Inner",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = INNER_DISABLED_SIZE,
+		BackgroundColor3 = Theme.CircleToggle.DisabledInner,
+		BorderSizePixel = 0,
+		Parent = ToggleButton,
+	})
+
+	circle(Inner)
+
+	local enabled = false
+	local subscribers = {}
+
+	local function animateState()
+		if not ToggleButton.Parent then return end
+
+		local outerColor = enabled and Theme.CircleToggle.EnabledOuter or Theme.CircleToggle.DisabledOuter
+		local innerColor = enabled and Theme.CircleToggle.EnabledInner or Theme.CircleToggle.DisabledInner
+		local innerSize = enabled and INNER_ENABLED_SIZE or INNER_DISABLED_SIZE
+
+		TweenService:Create(ToggleButton, TOGGLE_OUTER_INFO, {BackgroundColor3 = outerColor}):Play()
+
+		local burstTween = TweenService:Create(Inner, TOGGLE_BURST_INFO, {
+			Size = INNER_BURST_SIZE,
+			BackgroundColor3 = outerColor,
+		})
+
+		burstTween:Play()
+
+		task.spawn(function()
+			burstTween.Completed:Wait()
+			if not ToggleButton.Parent then return end
+
+			TweenService:Create(Inner, TOGGLE_SETTLE_INFO, {
+				Size = innerSize,
+				BackgroundColor3 = innerColor,
+			}):Play()
+		end)
+	end
+
+	local function notifySubscribers()
+		for _, subscriber in ipairs(subscribers) do
+			task.spawn(subscriber, enabled)
+		end
+	end
+
+	local function setState(targetState, saveAfter)
+		targetState = targetState == true
+		if enabled == targetState then return end
+
+		local success
+		local errorMessage
+
+		if targetState then
+			success, errorMessage = pcall(function() feature:enable() end)
+		else
+			success, errorMessage = pcall(function() feature:disable() end)
+		end
+
+		if not success then
+			warn("[Feature Manager] Failed to change " .. feature.NAME .. ":", errorMessage)
+		end
+
+		local stateSuccess, actualState = pcall(function()
+			return feature:isEnabled()
+		end)
+
+		if stateSuccess then
+			enabled = actualState == true
+		else
+			enabled = targetState
+		end
+
+		animateState()
+		notifySubscribers()
+
+		if saveAfter ~= false then SaveManager:Save() end
+	end
+
+	local function snapState(targetState)
+		enabled = targetState == true
+
+		local outerColor = enabled and Theme.CircleToggle.EnabledOuter or Theme.CircleToggle.DisabledOuter
+		local innerColor = enabled and Theme.CircleToggle.EnabledInner or Theme.CircleToggle.DisabledInner
+		local innerSize = enabled and INNER_ENABLED_SIZE or INNER_DISABLED_SIZE
+
+		ToggleButton.BackgroundColor3 = outerColor
+		Inner.BackgroundColor3 = innerColor
+		Inner.Size = innerSize
+	end
+
+	local function refresh()
+		local success, result = pcall(function()
+			return feature:isEnabled()
+		end)
+
+		if success then snapState(result == true) end
+	end
+
+	connectTap(ToggleButton, function()
+		setState(not enabled, true)
+	end)
+
+	local function onChanged(callback)
+		table.insert(subscribers, callback)
+	end
+
+	if initialState ~= nil then
+		snapState(initialState)
+	else
+		refresh()
+	end
+
+	if registerFeatureRefresher ~= false then FeatureToggleRefreshers[featureIndex] = refresh end
+
+	table.insert(ThemeObjects.Toggles, {
+		Index = featureIndex,
+		Feature = feature,
+		Button = ToggleButton,
+		Inner = Inner,
+	})
+
+	return {
+		Instance = ToggleButton,
+		Feature = feature,
+		Index = featureIndex,
+		GetState = function() return enabled end,
+		SetState = setState,
+		SnapState = snapState,
+		OnChanged = onChanged,
+	}
+end
+
+-- ============================================================
+-- Mirror Toggles
+-- ============================================================
+
+local function mirrorToggles(toggleA, toggleB)
+	toggleB.SnapState(toggleA.GetState())
+
+	toggleA.OnChanged(function(newState)
+		if toggleB.GetState() ~= newState then toggleB.SetState(newState, false) end
+	end)
+
+	toggleB.OnChanged(function(newState)
+		if toggleA.GetState() ~= newState then toggleA.SetState(newState, false) end
+	end)
+end
+
+-- ============================================================
+-- Feature Bar
+-- ============================================================
+
+local function createFeatureBar(parent, feature, featureIndex, layoutOrder, widthScale, xOffset)
+	local FeatureBar = new("Frame", {
+		Name = feature.NAME,
+		Size = UDim2.new(widthScale, xOffset, 0, FEATURE_HEIGHT),
+		BackgroundColor3 = Theme.FeatureBar.Background,
+		BorderSizePixel = 0,
+		LayoutOrder = layoutOrder,
+		Active = false,
+		Parent = parent,
+	})
+
+	local FeatureStroke = new("UIStroke", {
+		Color = Theme.FeatureBar.Outline,
+		Thickness = 1,
+		Parent = FeatureBar,
+	})
+
+	corner(FeatureBar, 0.20, 8)
+
+	local NameLabel = new("TextLabel", {
+		Name = "Name",
+		Size = UDim2.new(1, -(FEATURE_INTERNAL_PADDING * 2 + CIRCLE_SIZE), 1, 0),
+		Position = UDim2.fromOffset(FEATURE_INTERNAL_PADDING, 0),
+		BackgroundTransparency = 1,
+		Text = feature.NAME,
+		TextColor3 = Theme.FeatureBar.Name,
+		TextSize = 13,
+		Font = Enum.Font.GothamMedium,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Center,
+		Parent = FeatureBar,
+	})
+
+	local toggleHandle = createToggle(FeatureBar, feature, featureIndex, nil, true)
+	local Toggle = toggleHandle.Instance
+
+	connectTap(FeatureBar, nil, function()
+		if spawnTogglePopup then spawnTogglePopup(toggleHandle) end
+	end)
+
+	table.insert(ThemeObjects.FeatureBars, {
+		Index = featureIndex,
+		Feature = feature,
+		Bar = FeatureBar,
+		Name = NameLabel,
+		Stroke = FeatureStroke,
+		Toggle = Toggle,
+		Inner = Toggle:FindFirstChild("Inner"),
+	})
+
+	return FeatureBar
+end
+
+-- ============================================================
+-- Feature Rows
+-- ============================================================
+
+local placedFeatures = {}
+local nextRowIndex = 1
+
+local function createFeatureRow(rowIndex, featureIndexes)
+	local validFeatures = {}
+
+	for _, featureIndex in ipairs(featureIndexes) do
+		local feature = Features[featureIndex]
+
+		if feature then
+			table.insert(validFeatures, {
+				index = featureIndex,
+				feature = feature,
+			})
+
+			placedFeatures[featureIndex] = true
+		end
+	end
+
+	local featureCount = #validFeatures
+	if featureCount == 0 then return end
+
+	local Row = new("Frame", {
+		Name = "Row_" .. rowIndex,
+		Size = UDim2.new(1, 0, 0, FEATURE_HEIGHT),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		LayoutOrder = rowIndex,
+		Parent = FeatureList,
+	})
+
+	if featureCount == 1 then
+		createFeatureBar(Row, validFeatures[1].feature, validFeatures[1].index, 1, 1, 0)
+		return
+	end
+
+	new("UIListLayout", {
+		FillDirection = Enum.FillDirection.Horizontal,
+		HorizontalAlignment = Enum.HorizontalAlignment.Left,
+		VerticalAlignment = Enum.VerticalAlignment.Top,
+		Padding = UDim.new(0, FEATURE_GAP),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+		Parent = Row,
+	})
+
+	local width = 1 / featureCount
+	local widthOffset = -(FEATURE_GAP * (featureCount - 1) / featureCount)
+
+	for featureIndex, data in ipairs(validFeatures) do
+		createFeatureBar(Row, data.feature, data.index, featureIndex, width, widthOffset)
+	end
+end
+
+for _, row in ipairs(FeatureRows) do
+	createFeatureRow(nextRowIndex, row)
+	nextRowIndex += 1
+end
+
+for featureIndex = 1, #FEATURE_URLS do
+	if Features[featureIndex] and not placedFeatures[featureIndex] then
+		createFeatureRow(nextRowIndex, {featureIndex})
+		nextRowIndex += 1
+	end
+end
+
+-- ============================================================
+-- Theme Window
+-- ============================================================
+
+ThemeWindow = new("Frame", {
+	Name = "ThemeWindow",
+	Size = UDim2.new(0, 0, 1, 0),
+	Position = UDim2.new(1, 0, 0, 0),
+	BackgroundColor3 = Theme.Window.Background,
+	BorderSizePixel = 0,
+	ClipsDescendants = true,
+	ZIndex = 30,
+	Parent = Main,
+})
+
+corner(ThemeWindow, 0.05, 10)
+
+ThemeWindowStroke = new("UIStroke", {
+	Color = Theme.Window.Outline,
+	Thickness = 1,
+	Parent = ThemeWindow,
+})
+
+ThemeWindowStroke.Enabled = false
+
+-- ============================================================
+-- Theme Header
+-- ============================================================
+
+ThemeHeader = new("Frame", {
+	Name = "Header",
+	Size = UDim2.new(1, 0, 0, HEADER_HEIGHT),
+	Position = UDim2.fromOffset(0, 0),
+	BackgroundColor3 = Theme.Header.Background,
+	BorderSizePixel = 0,
+	ZIndex = 31,
+	Parent = ThemeWindow,
+})
+
+corner(ThemeHeader, 0.25, 10)
+
+ThemeHeaderTitle = new("TextLabel", {
+	Name = "Title",
+	Size = UDim2.new(1, 0, 1, 0),
+	Position = UDim2.fromOffset(0, 0),
+	BackgroundTransparency = 1,
+	Text = "Theme",
+	TextColor3 = Theme.Header.Title,
+	TextSize = 15,
+	Font = Enum.Font.GothamMedium,
+	TextXAlignment = Enum.TextXAlignment.Center,
+	TextYAlignment = Enum.TextYAlignment.Center,
+	ZIndex = 32,
+	Parent = ThemeHeader,
+})
+
+-- ============================================================
+-- Theme Content
+-- ============================================================
+
+ThemeContent = new("Frame", {
+	Name = "Content",
+	Position = UDim2.fromOffset(THEME_WINDOW_PADDING, HEADER_HEIGHT + HEADER_GAP),
+	Size = UDim2.new(1, -(THEME_WINDOW_PADDING * 2), 1, -(HEADER_HEIGHT + HEADER_GAP + THEME_WINDOW_PADDING)),
+	BackgroundColor3 = Theme.Content.Background,
+	BorderSizePixel = 0,
+	ClipsDescendants = true,
+	ZIndex = 31,
+	Parent = ThemeWindow,
+})
+
+corner(ThemeContent, 0.15, 8)
+
+-- ============================================================
+-- Theme List
+-- ============================================================
+
+local ThemeList = new("ScrollingFrame", {
+	Name = "ThemeList",
+	Position = UDim2.fromOffset(6, 6),
+	Size = UDim2.new(1, -12, 1, -12),
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	ScrollBarThickness = 0,
+	ScrollingDirection = Enum.ScrollingDirection.Y,
+	CanvasSize = UDim2.fromOffset(0, 0),
+	AutomaticCanvasSize = Enum.AutomaticSize.None,
+	ZIndex = 32,
+	Parent = ThemeContent,
+})
+
+new("UIPadding", {
+	PaddingTop = UDim.new(0, 2),
+	PaddingBottom = UDim.new(0, 2),
+	PaddingLeft = UDim.new(0, 2),
+	PaddingRight = UDim.new(0, 2),
+	Parent = ThemeList,
+})
+
+local ThemeListLayout = new("UIListLayout", {
+	FillDirection = Enum.FillDirection.Vertical,
+	HorizontalAlignment = Enum.HorizontalAlignment.Left,
+	VerticalAlignment = Enum.VerticalAlignment.Top,
+	Padding = UDim.new(0, THEME_ITEM_GAP),
+	SortOrder = Enum.SortOrder.LayoutOrder,
+	Parent = ThemeList,
+})
+
+local function updateThemeCanvasSize()
+	ThemeList.CanvasSize = UDim2.fromOffset(0, ThemeListLayout.AbsoluteContentSize.Y + 4)
+end
+
+ThemeListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateThemeCanvasSize)
+
+-- ============================================================
+-- Theme Items
+-- ============================================================
+
+local ThemeItems = {}
+
+local function createThemeItem(themeName, index)
+	local ThemeItem = new("TextButton", {
+		Name = themeName,
+		Size = UDim2.new(1, 0, 0, THEME_ITEM_HEIGHT),
+		BackgroundColor3 = Theme.FeatureBar.Background,
+		BorderSizePixel = 0,
+		Text = themeName,
+		TextColor3 = Theme.FeatureBar.Name,
+		TextSize = 13,
+		Font = Enum.Font.Gotham,
+		TextXAlignment = Enum.TextXAlignment.Center,
+		TextYAlignment = Enum.TextYAlignment.Center,
+		TextStrokeTransparency = 1,
+		AutoButtonColor = false,
+		LayoutOrder = index,
+		ZIndex = 33,
+		Parent = ThemeList,
+	})
+
+	local ThemeItemStroke = new("UIStroke", {
+		Color = Theme.FeatureBar.Outline,
+		Thickness = 1,
+		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+		Parent = ThemeItem,
+	})
+
+	corner(ThemeItem, 0.20, 8)
+
+	local data = {
+		Item = ThemeItem,
+		Stroke = ThemeItemStroke,
+	}
+
+	ThemeItems[themeName] = data
+	ThemeObjects.ThemeItems[themeName] = data
+
+	return ThemeItem
+end
+
+local themeNames = ThemeManager:getThemeNames()
+
+for index, themeName in ipairs(themeNames) do
+	createThemeItem(themeName, index)
+end
+
+updateThemeCanvasSize()
+
+-- ============================================================
+-- Theme Connections
+-- ============================================================
+
+for themeName, data in pairs(ThemeItems) do
+	connectTap(data.Item, function()
+		if applyTheme(themeName, true) then SaveManager:Save() end
+	end)
+end
+
+-- ============================================================
+-- Theme Window Animation
+-- ============================================================
+
+local themeWindowOpen = false
+local themeWindowTween = nil
+
+local function setThemeWindow(open)
+	themeWindowOpen = open
+
+	if themeWindowTween then
+		themeWindowTween:Cancel()
+		themeWindowTween = nil
+	end
+
+	ThemeWindowStroke.Enabled = open
+
+	local targetWidth = open and THEME_WINDOW_WIDTH or 0
+
+	themeWindowTween = TweenService:Create(ThemeWindow, THEME_TWEEN_INFO, {
+		Size = UDim2.new(0, targetWidth, 1, 0),
+	})
+
+	themeWindowTween:Play()
+end
+
+-- ============================================================
+-- Title Double Tap
+-- ============================================================
+
+connectTap(Title, nil, function()
+	setThemeWindow(not themeWindowOpen)
+end)
+
+-- ============================================================
+-- Resize Handles
+-- ============================================================
+
+local ResizeCornerButton = new("TextButton", {
+	Name = "ResizeCorner",
+	Size = UDim2.fromOffset(RESIZE_CORNER_SIZE, RESIZE_CORNER_SIZE),
+	AnchorPoint = Vector2.new(1, 1),
+	Position = UDim2.new(1, 0, 1, 0),
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	Text = "",
+	TextTransparency = 1,
+	AutoButtonColor = false,
+	ZIndex = 10,
+	Parent = Main,
+})
+
+corner(ResizeCornerButton, 0.20, 6)
+
+local RightResizeZone = new("TextButton", {
+	Name = "RightResizeZone",
+	Size = UDim2.new(0, RESIZE_ZONE_SIZE, 1, 0),
+	Position = UDim2.new(1, -RESIZE_ZONE_SIZE, 0, 0),
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	Text = "",
+	AutoButtonColor = false,
+	ZIndex = 9,
+	Parent = Main,
+})
+
+local BottomResizeZone = new("TextButton", {
+	Name = "BottomResizeZone",
+	Size = UDim2.new(1, 0, 0, RESIZE_ZONE_SIZE),
+	Position = UDim2.new(0, 0, 1, -RESIZE_ZONE_SIZE),
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	Text = "",
+	AutoButtonColor = false,
+	ZIndex = 9,
+	Parent = Main,
+})
+
+-- ============================================================
+-- Camera Block
+-- ============================================================
+
+local CAMERA_BLOCK_ACTION = "FeatureManagerCameraBlock"
+
+local function blockCamera()
+	return Enum.ContextActionResult.Sink
+end
+
+local function setCameraBlocked(blocked)
+	if blocked then
+		ContextActionService:BindActionAtPriority(CAMERA_BLOCK_ACTION, blockCamera, false, Enum.ContextActionPriority.High.Value, Enum.UserInputType.MouseMovement, Enum.UserInputType.MouseButton2, Enum.UserInputType.Touch)
+	else
+		ContextActionService:UnbindAction(CAMERA_BLOCK_ACTION)
+	end
+end
+
+-- ============================================================
+-- Gesture System
+-- ============================================================
+
+local activeGesture = nil
+
+local function beginGesture(update)
+	if activeGesture then return false end
+
+	activeGesture = update
+	setCameraBlocked(true)
+
+	return true
+end
+
+local function endGesture()
+	if not activeGesture then return end
+
+	activeGesture = nil
+	setCameraBlocked(false)
+	SaveManager:Save()
+end
+
+UserInputService.InputChanged:Connect(function(input)
+	if activeGesture and isMoveInput(input) then activeGesture(input) end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+	if activeGesture and isPrimaryInput(input) then endGesture() end
+end)
+
+-- ============================================================
+-- Dragging
+-- ============================================================
+
+local function makeDraggable(handle, target)
+	local dragStart
+	local startPosition
+	local activeInput
+
+	local function update(input)
+		if not dragStart or not startPosition then return end
+
+		local delta = input.Position - dragStart
+
+		target.Position = UDim2.new(
+			startPosition.X.Scale,
+			startPosition.X.Offset + delta.X,
+			startPosition.Y.Scale,
+			startPosition.Y.Offset + delta.Y
+		)
+	end
+
+	handle.InputBegan:Connect(function(input)
+		if not isPrimaryInput(input) then return end
+		if activeInput then return end
+		if not beginGesture(update) then return end
+
+		activeInput = input
+		dragStart = input.Position
+		startPosition = target.Position
+	end)
+
+	UserInputService.InputEnded:Connect(function(input)
+		if input ~= activeInput then return end
+
+		activeInput = nil
+		dragStart = nil
+		startPosition = nil
+		endGesture()
+	end)
+end
+
+-- ============================================================
+-- Header Dragging
+-- ============================================================
+
+local titleDragStart
+local titleStartPosition
+local titleActiveInput
+
+Title.InputBegan:Connect(function(input)
+	if not isPrimaryInput(input) then return end
+	if titleActiveInput then return end
+
+	if not beginGesture(function(inputObject)
+		local delta = inputObject.Position - titleDragStart
+
+		Main.Position = UDim2.new(
+			titleStartPosition.X.Scale,
+			titleStartPosition.X.Offset + delta.X,
+			titleStartPosition.Y.Scale,
+			titleStartPosition.Y.Offset + delta.Y
+		)
+	end) then
+		return
+	end
+
+	titleActiveInput = input
+	titleDragStart = input.Position
+	titleStartPosition = Main.Position
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+	if input ~= titleActiveInput then return end
+
+	titleActiveInput = nil
+	titleDragStart = nil
+	titleStartPosition = nil
+	endGesture()
+end)
+
+-- ============================================================
+-- Header Dragging
+-- ============================================================
+
+makeDraggable(Header, Main)
+
+-- ============================================================
+-- Resizing
+-- ============================================================
+
+local function makeResizable(handle, mode)
+	local activeInput
+
+	handle.InputBegan:Connect(function(input)
+		if not isPrimaryInput(input) then return end
+		if activeInput then return end
+
+		local resizeStart = input.Position
+		local startSize = Main.AbsoluteSize
+		local startPosition = Main.Position
+
+		if not beginGesture(function(moveInput)
+			local delta = moveInput.Position - resizeStart
+			local width = startSize.X
+			local height = startSize.Y
+
+			if mode == "Right" or mode == "Corner" then
+				width = math.max(MIN_WINDOW_SIZE.X, startSize.X + delta.X)
+			end
+
+			if mode == "Bottom" or mode == "Corner" then
+				height = math.max(MIN_WINDOW_SIZE.Y, startSize.Y + delta.Y)
+			end
+
+			Main.Size = UDim2.fromOffset(width, height)
+			Main.Position = startPosition
+		end) then
+			return
+		end
+
+		activeInput = input
+	end)
+
+	UserInputService.InputEnded:Connect(function(input)
+		if input ~= activeInput then return end
+
+		activeInput = nil
+		endGesture()
+	end)
+end
+
+makeResizable(RightResizeZone, "Right")
+makeResizable(BottomResizeZone, "Bottom")
+makeResizable(ResizeCornerButton, "Corner")
+
+-- ============================================================
+-- Toggle Popup
+-- ============================================================
+
+local FeatureTogglePopups = {}
+
+local function destroyTogglePopup(featureIndex)
+	local popupData = FeatureTogglePopups[featureIndex]
+	if not popupData then return end
+
+	FeatureTogglePopups[featureIndex] = nil
+	ThemeObjects.Popups[featureIndex] = nil
+
+	if popupData.ScreenGui and popupData.ScreenGui.Parent then
+		popupData.ScreenGui:Destroy()
+	end
+end
+
+local function destroyAllTogglePopups()
+	local featureIndexes = {}
+
+	for featureIndex in pairs(FeatureTogglePopups) do
+		table.insert(featureIndexes, featureIndex)
+	end
+
+	for _, featureIndex in ipairs(featureIndexes) do
+		destroyTogglePopup(featureIndex)
+	end
+end
+
+spawnTogglePopup = function(parentToggle)
+	local featureIndex = parentToggle.Index
+	destroyTogglePopup(featureIndex)
+
+	local PopupScreenGui = new("ScreenGui", {
+		Name = "FeatureTogglePopup_" .. tostring(featureIndex),
+		ResetOnSpawn = false,
+		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+		Parent = PlayerGui,
+	})
+
+	local PopupFrame = new("Frame", {
+		Name = "Popup",
+		Size = UDim2.fromOffset(POPUP_SIZE, POPUP_SIZE),
+		Position = UDim2.new(0.5, -POPUP_SIZE / 2, 0.5, -POPUP_SIZE / 2),
+		BackgroundColor3 = Theme.FeatureBar.Background,
+		BorderSizePixel = 0,
+		Active = true,
+		ZIndex = 40,
+		Parent = PopupScreenGui,
+	})
+
+	local PopupStroke = new("UIStroke", {
+		Color = Theme.FeatureBar.Outline,
+		Thickness = 1,
+		Parent = PopupFrame,
+	})
+
+	corner(PopupFrame, 0.20, 8)
+
+	local destroyed = false
+
+	local popupData = {
+		ScreenGui = PopupScreenGui,
+		Frame = PopupFrame,
+		Stroke = PopupStroke,
+		FeatureIndex = featureIndex,
+	}
+
+	FeatureTogglePopups[featureIndex] = popupData
+	ThemeObjects.Popups[featureIndex] = popupData
+
+	local function destroyPopup()
+		if destroyed then return end
+		destroyed = true
+
+		if FeatureTogglePopups[featureIndex] == popupData then
+			FeatureTogglePopups[featureIndex] = nil
+		end
+
+		ThemeObjects.Popups[featureIndex] = nil
+
+		if PopupScreenGui.Parent then PopupScreenGui:Destroy() end
+	end
+
+	local parentState = parentToggle.GetState()
+
+	local PopupToggle = createToggle(PopupFrame, parentToggle.Feature, parentToggle.Index, nil, false, parentState)
+
+	PopupToggle.Instance.AnchorPoint = Vector2.new(0.5, 0.5)
+	PopupToggle.Instance.Position = UDim2.fromScale(0.5, 0.5)
+	PopupToggle.Instance.ZIndex = 42
+
+	local popupInner = PopupToggle.Instance:FindFirstChild("Inner")
+
+	if popupInner then popupInner.ZIndex = 43 end
+
+	PopupToggle.SnapState(parentState)
+	mirrorToggles(parentToggle, PopupToggle)
+
+	connectTap(PopupFrame, nil, function()
+		destroyPopup()
+	end)
+
+	connectTap(PopupToggle.Instance, nil, function()
+		destroyPopup()
+	end)
+
+	makeDraggable(PopupFrame, PopupFrame)
+	makeDraggable(PopupToggle.Instance, PopupFrame)
+
+	return PopupScreenGui
+end
+
+-- ============================================================
+-- Mini Button
+-- ============================================================
+
+MiniButton = new("TextButton", {
+	Name = "MiniButton",
+	Size = UDim2.new(0, 83, 0, 30),
+	Position = UDim2.new(0.5, 160, 0.5, -237),
+	AnchorPoint = Vector2.new(0, 0),
+	BackgroundColor3 = Theme.Window.Background,
+	BorderSizePixel = 0,
+	Text = "FM",
+	TextColor3 = Theme.Header.Title,
+	TextSize = 15,
+	Font = Enum.Font.GothamBold,
+	AutoButtonColor = false,
+	Visible = false,
+	ZIndex = 20,
+	Parent = ScreenGui,
+})
+
+corner(MiniButton, 0.25, 12)
+
+MiniButtonStroke = new("UIStroke", {
+	Color = Theme.Window.Outline,
+	Thickness = 1,
+	ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+	ZIndex = 21,
+	Parent = MiniButton,
+})
+
+-- ============================================================
+-- Mini Button Display
+-- ============================================================
+
+local function getMiniButtonText()
+	if game.PlaceId == 115286378269814 then
+		local success, text = pcall(function()
+			return workspace.IncidentSign.SurfaceGui.TextLabel.Text
+		end)
+
+		if success and type(text) == "string" then
+			local time = text:match("Time without incident%s*%-%s*(.+)")
+			if time then return time end
+		end
+
+		return "--:--:--"
+	elseif game.PlaceId == 129028588391526 then
+		local success, value = pcall(function()
+			return game:GetService("ReplicatedStorage").GlobalVariables.World2WaveNumber.Value
+		end)
+
+		if success then return tostring(value) end
+		return "0"
+	elseif game.PlaceId == 135597952046626 then
+		local success, text = pcall(function()
+			return workspace.Special.ClientTrain.DistanceSign.SurfaceGui.TextLabel.Text
+		end)
+
+		if success and type(text) == "string" then
+			return text:gsub("m$", "")
+		end
+
+		return "0"
+	end
+
+	return "FM"
+end
+
+local function updateMiniButtonText()
+	if MiniButton and MiniButton.Parent then
+		MiniButton.Text = getMiniButtonText()
+	end
+end
+
+task.spawn(function()
+	while ScreenGui.Parent do
+		updateMiniButtonText()
+		task.wait(0.25)
+	end
+end)
+
+-- ============================================================
+-- Connect Save Manager
+-- ============================================================
+
+SaveManager:SetWindow(Main, MiniButton)
+
+-- ============================================================
+-- Minimize / Maximize
+-- ============================================================
+
+local function minimize()
+	Main.Visible = false
+	MiniButton.Visible = true
+	SaveManager:Save()
+end
+
+local function maximize()
+	MiniButton.Visible = false
+	Main.Visible = true
+	SaveManager:Save()
+end
+
+local miniDragStart
+local miniStartPosition
+local miniActiveInput
+local miniMoved = false
+
+MiniButton.InputBegan:Connect(function(input)
+	if not isPrimaryInput(input) then return end
+	if miniActiveInput then return end
+
+	if not beginGesture(function(moveInput)
+		local delta = moveInput.Position - miniDragStart
+
+		if math.abs(delta.X) > DRAG_THRESHOLD or math.abs(delta.Y) > DRAG_THRESHOLD then
+			miniMoved = true
+		end
+
+		MiniButton.Position = UDim2.new(
+			miniStartPosition.X.Scale,
+			miniStartPosition.X.Offset + delta.X,
+			miniStartPosition.Y.Scale,
+			miniStartPosition.Y.Offset + delta.Y
+		)
+	end) then
+		return
+	end
+
+	miniActiveInput = input
+	miniDragStart = input.Position
+	miniStartPosition = MiniButton.Position
+	miniMoved = false
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+	if input ~= miniActiveInput then return end
+
+	local wasMoved = miniMoved
+
+	miniActiveInput = nil
+	miniDragStart = nil
+	miniStartPosition = nil
+	miniMoved = false
+
+	endGesture()
+
+	if not wasMoved then maximize() end
+end)
+
+-- ============================================================
+-- Minimize Button
+-- ============================================================
+
+connectTap(MinimizeButton, function()
+	if not activeGesture then minimize() end
+end)
+
+-- ============================================================
+-- Initial Theme Application
+-- ============================================================
+
+applyTheme(CurrentThemeName, false)
+
+-- ============================================================
+-- Load Saved Configuration
+-- ============================================================
+
+task.defer(function()
+	local loaded, savedData = SaveManager:LoadAutoloadConfig()
+	if not loaded then return end
+
+	-- ========================================================
+	-- Restore Saved Theme
+	-- ========================================================
+
+	local savedTheme
+
+	if type(savedData) == "table" then
+		savedTheme = savedData.theme
+	end
+
+	if not savedTheme and type(SaveManager.GetTheme) == "function" then
+		local themeSuccess, themeResult = pcall(function()
+			return SaveManager:GetTheme()
+		end)
+
+		if themeSuccess then savedTheme = themeResult end
+	end
+
+	if type(savedTheme) == "string" then
+		local themeExists = ThemeManager:getTheme(savedTheme)
+
+		if themeExists then
+			applyTheme(savedTheme, false)
+		end
+	end
+
+	-- ========================================================
+	-- Restore Saved Feature States
+	-- ========================================================
+
+	if type(savedData) == "table" and type(savedData.objects) == "table" then
+		for featureIndex, feature in pairs(Features) do
+			local savedState = savedData.objects[tostring(featureIndex)]
+
+			if savedState ~= nil then
+				local targetState = savedState == true
+
+				local stateSuccess, currentState = pcall(function()
+					return feature:isEnabled()
+				end)
+
+				currentState = stateSuccess and currentState == true or false
+
+				if currentState ~= targetState then
+					local featureSuccess, featureError
+
+					if targetState then
+						featureSuccess, featureError = pcall(function()
+							feature:enable()
+						end)
+					else
+						featureSuccess, featureError = pcall(function()
+							feature:disable()
+						end)
+					end
+
+					if not featureSuccess then
+						warn("[Feature Manager] Failed to restore feature " .. tostring(featureIndex) .. ":", featureError)
+					end
+				end
+			end
+		end
+	end
+
+	-- ========================================================
+	-- Refresh Toggle Visuals
+	-- ========================================================
+
+	task.wait()
+
+	for _, refresh in pairs(FeatureToggleRefreshers) do
+		if type(refresh) == "function" then pcall(refresh) end
+	end
+
+	-- ========================================================
+	-- Reapply Theme Once More
+	-- ========================================================
+
+	applyTheme(CurrentThemeName, false)
+end)
+
+-- ============================================================
+-- Feature Cleanup
+-- ============================================================
+
+local function cleanupFeatures()
+	for index, feature in pairs(Features) do
+		if feature then
+			local success, errorMessage = pcall(function()
+				feature:disable()
+			end)
+
+			if not success then
+				warn("[Feature Manager] Failed to disable feature " .. tostring(index), errorMessage)
+			end
+
+			success, errorMessage = pcall(function()
+				feature:cleanup()
+			end)
+
+			if not success then
+				warn("[Feature Manager] Failed to cleanup feature " .. tostring(index), errorMessage)
+			end
+		end
+	end
+end
+
+-- ============================================================
+-- Close
+-- ============================================================
+
+connectTap(CloseButton, function()
+	setCameraBlocked(false)
+	destroyAllTogglePopups()
+	cleanupFeatures()
+	ScreenGui:Destroy()
+end)
+
+-- ============================================================
+-- Loaded
+-- ============================================================
+
+print("[Feature Manager] Loaded | Theme:", CurrentThemeName)
