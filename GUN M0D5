@@ -23,7 +23,7 @@ local Feature = {
 }
 
 -- ============================================
--- MODIFIED STATS
+-- GENERAL GUN SETTINGS
 -- ============================================
 
 Feature._modifiedStats = {
@@ -44,11 +44,6 @@ Feature._modifiedStats = {
 	BulletSpeed = 9000,
 	EquippedAnimationID = nil,
 	EquippedAnimationSpeed = 99,
-	SniperEnabled = false,
-    DelayBeforeFiring = 0,
-    DelayAfterFiring = 0,
-    ChargingTime = 0,
-
 	Ammo = math.huge,
 	MaxAmmo = math.huge,
 
@@ -68,6 +63,77 @@ Feature._modifiedStats = {
 	PenetrationDamageReduction = 0,
 
 	DamageDropOffEnabled = false,
+}
+
+-- ============================================
+-- SOUL GUN SETTINGS
+-- Applied exclusively to guns whose names
+-- contain "soul", case-insensitively.
+-- ============================================
+
+Feature._soulStats = {
+	FireRate = 0.0001,
+	AmmoPerMag = math.huge,
+	Ammo = math.huge,
+	MaxAmmo = math.huge,
+	ReloadTime = 0,
+
+	CameraRecoilingEnabled = false,
+	Spread = 0,
+	Recoil = 0,
+	CrossExpansion = 0,
+	Range = 9999,
+
+	-- Homing
+	HomingEnabled = true,
+	HomingTargetDistance = 9999,
+	HomingCloseAimDistance = 80,
+	HomingThroughWalls = true,
+	HomingRetargetDistance = 9999,
+	HomingMaxTime = 15,
+	HomingDelay = 0,
+	HomingMaxSpeed = 9999,
+	HomingMinSpeed = 100,
+	HomingThrust = 1500,
+	HomingBrake = 1500,
+	HomingMaxLateral = 10000,
+	HomingTurnMax = 2000,
+	HomingTurnGain = 6,
+	HomingArcMargin = 1.15,
+	HomingLeadMax = 1,
+	HomingFinalDistance = 50,
+	HomingFinalPull = 8,
+	HomingFuseDistance = 6,
+	HomingLoftDistance = 0,
+	HomingLoftRatio = 0,
+	HomingLoftMax = 0,
+	HomingLookAhead = 0,
+	HomingLookAheadClearance = 0,
+}
+
+-- ============================================
+-- BLASTER SETTINGS
+-- ============================================
+
+Feature._blasterStats = {
+	Auto = true,
+	FireRate = 0.05,
+	ExplosionRadius = 60,
+	Range = 9999,
+	Lifetime = 60,
+
+	CameraRecoilingEnabled = false,
+	Recoil = 0,
+	Spread = 0,
+	CrossExpansion = 0,
+
+	AmmoPerMag = math.huge,
+	ReloadTime = 0,
+	EquipTime = 0.01,
+	ZeroDamageDistance = 9999,
+	FullDamageDistance = 9999,
+	BulletSpeed = 99999,
+	CrossSize = 1,
 }
 
 -- ============================================
@@ -222,34 +288,15 @@ end
 -- SAVE ORIGINAL SETTINGS
 -- ============================================
 
-function Feature._saveOriginal(config, isBlaster)
+function Feature._saveOriginal(config, stats)
 	if Feature._originalModules[config] then
 		return
 	end
 
 	local snapshot = {}
 
-	if isBlaster then
-		snapshot.Auto = config.Auto
-		snapshot.FireRate = config.FireRate
-		snapshot.ExplosionRadius = config.ExplosionRadius
-		snapshot.Range = config.Range
-		snapshot.Lifetime = config.Lifetime
-		snapshot.CameraRecoilingEnabled = config.CameraRecoilingEnabled
-		snapshot.Recoil = config.Recoil
-		snapshot.Spread = config.Spread
-		snapshot.CrossExpansion = config.CrossExpansion
-		snapshot.AmmoPerMag = config.AmmoPerMag
-		snapshot.ReloadTime = config.ReloadTime
-		snapshot.EquipTime = config.EquipTime
-		snapshot.ZeroDamageDistance = config.ZeroDamageDistance
-		snapshot.FullDamageDistance = config.FullDamageDistance
-		snapshot.BulletSpeed = config.BulletSpeed
-		snapshot.CrossSize = config.CrossSize
-	else
-		for key in pairs(Feature._modifiedStats) do
-			snapshot[key] = config[key]
-		end
+	for key in pairs(stats) do
+		snapshot[key] = config[key]
 	end
 
 	snapshot.FireAnimations = Feature._snapshotAnimations(config)
@@ -274,29 +321,30 @@ function Feature._modifyConfig(config, gunName)
 		return
 	end
 
-	local isBlaster = gunName == "Blaster"
+	local lowerName = string.lower(gunName)
 
-	Feature._saveOriginal(config, isBlaster)
+	-- SOUL GUNS TAKE PRIORITY OVER ALL OTHER MODS.
+	-- Only _soulStats are applied to Soul guns.
+	local isSoulGun = string.find(lowerName, "soul", 1, true) ~= nil
 
-	if isBlaster then
-		config.Auto = true
-		config.FireRate = 0.05
-		config.ExplosionRadius = 60
-		config.Range = 9999
-		config.Lifetime = 60
+	if isSoulGun then
+		Feature._saveOriginal(config, Feature._soulStats)
 
-		config.CameraRecoilingEnabled = false
-		config.Recoil = 0
-		config.Spread = 0
-		config.CrossExpansion = 0
+		for key, value in pairs(Feature._soulStats) do
+			config[key] = value
+		end
 
-		config.AmmoPerMag = math.huge
-		config.ReloadTime = 0
-		config.EquipTime = 0.01
-		config.ZeroDamageDistance = 9999
-		config.FullDamageDistance = 9999
-		config.BulletSpeed = 99999
-		config.CrossSize = 1
+		Feature._modifiedModules[config] = true
+		return
+	end
+
+	-- PRESERVE BLASTER'S SEPARATE MODIFICATION.
+	if gunName == "Blaster" then
+		Feature._saveOriginal(config, Feature._blasterStats)
+
+		for key, value in pairs(Feature._blasterStats) do
+			config[key] = value
+		end
 
 		Feature._disableAnimations(config)
 
@@ -304,9 +352,12 @@ function Feature._modifyConfig(config, gunName)
 		return
 	end
 
+	-- GENERAL MODIFICATIONS FOR ALL OTHER GUNS.
 	if config.FireRate == nil then
 		return
 	end
+
+	Feature._saveOriginal(config, Feature._modifiedStats)
 
 	for key, value in pairs(Feature._modifiedStats) do
 		config[key] = value
@@ -426,10 +477,6 @@ end
 -- LIFECYCLE
 -- ============================================
 
--- ============================================
--- ENABLE
--- ============================================
-
 function Feature.enable()
 	Feature.cleanup()
 
@@ -440,10 +487,6 @@ function Feature.enable()
 
 	Feature._queueApply()
 end
-
--- ============================================
--- DISABLE
--- ============================================
 
 function Feature.disable()
 	Feature._enabled = false
