@@ -67,8 +67,6 @@ Feature._modifiedStats = {
 
 -- ============================================
 -- SOUL GUN SETTINGS
--- Applied exclusively to guns whose names
--- contain "soul", case-insensitively.
 -- ============================================
 
 Feature._soulStats = {
@@ -134,22 +132,41 @@ Feature._blasterStats = {
 	FullDamageDistance = 9999,
 	BulletSpeed = 99999,
 	CrossSize = 1,
-	
-	BurstFireEnabled = true,
-    BulletPerBurst = 5,
-    BurstRate = 0.0001,
-	
-    HomingTargetDistance = 9999,
+}
+
+-- ============================================
+-- HM-LAUNCHER SETTINGS
+-- ============================================
+
+Feature._hmLauncherStats = {
+--	BurstFireEnabled = true,
+	BulletPerBurst = 5,
+	BurstRate = 0.0001,
+
+	FireRate = 0.0001,
+--	AmmoPerMag = math.huge,
+--	Ammo = math.huge,
+--	MaxAmmo = math.huge,
+	ReloadTime = 0,
+
+	CameraRecoilingEnabled = false,
+	Spread = 0,
+	Recoil = 0,
+	CrossExpansion = 0,
+	Range = 9999,
+
+	-- Homing
+	HomingTargetDistance = 9999,
 	HomingCloseAimDistance = 80,
 	HomingThroughWalls = true,
 	HomingRetargetDistance = 9999,
 	HomingMaxTime = 15,
 	HomingDelay = 0,
-	HomingMaxSpeed = 9999,
+--	HomingMaxSpeed = 9999,
 	HomingMinSpeed = 100,
 	HomingThrust = 1500,
 	HomingBrake = 1500,
-	HomingMaxLateral = 10000,
+--	HomingMaxLateral = 10000,
 	HomingTurnMax = 2000,
 	HomingTurnGain = 6,
 	HomingArcMargin = 1.15,
@@ -351,11 +368,8 @@ function Feature._modifyConfig(config, gunName)
 
 	local lowerName = string.lower(gunName)
 
-	-- SOUL GUNS TAKE PRIORITY OVER ALL OTHER MODS.
-	-- Only _soulStats are applied to Soul guns.
-	local isSoulGun = string.find(lowerName, "soul", 1, true) ~= nil
-
-	if isSoulGun then
+	-- SOUL GUNS: SOUL SETTINGS ONLY.
+	if string.find(lowerName, "soul", 1, true) then
 		Feature._saveOriginal(config, Feature._soulStats)
 
 		for key, value in pairs(Feature._soulStats) do
@@ -366,8 +380,8 @@ function Feature._modifyConfig(config, gunName)
 		return
 	end
 
-	-- PRESERVE BLASTER'S SEPARATE MODIFICATION.
-	if gunName == "Blaster" or gunName == "HM-Launcher" then
+	-- BLASTER: BLASTER SETTINGS ONLY.
+	if gunName == "Blaster" then
 		Feature._saveOriginal(config, Feature._blasterStats)
 
 		for key, value in pairs(Feature._blasterStats) do
@@ -380,7 +394,19 @@ function Feature._modifyConfig(config, gunName)
 		return
 	end
 
-	-- GENERAL MODIFICATIONS FOR ALL OTHER GUNS.
+	-- HM-LAUNCHER: HM-LAUNCHER SETTINGS ONLY.
+	if gunName == "HM-Launcher" then
+		Feature._saveOriginal(config, Feature._hmLauncherStats)
+
+		for key, value in pairs(Feature._hmLauncherStats) do
+			config[key] = value
+		end
+
+		Feature._modifiedModules[config] = true
+		return
+	end
+
+	-- GENERAL MODIFICATIONS: ALL OTHER GUNS.
 	if config.FireRate == nil then
 		return
 	end
