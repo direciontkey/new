@@ -134,6 +134,34 @@ Feature._blasterStats = {
 	FullDamageDistance = 9999,
 	BulletSpeed = 99999,
 	CrossSize = 1,
+	
+	BurstFireEnabled = true,
+    BulletPerBurst = 5,
+    BurstRate = 0.0001,
+	
+    HomingTargetDistance = 9999,
+	HomingCloseAimDistance = 80,
+	HomingThroughWalls = true,
+	HomingRetargetDistance = 9999,
+	HomingMaxTime = 15,
+	HomingDelay = 0,
+	HomingMaxSpeed = 9999,
+	HomingMinSpeed = 100,
+	HomingThrust = 1500,
+	HomingBrake = 1500,
+	HomingMaxLateral = 10000,
+	HomingTurnMax = 2000,
+	HomingTurnGain = 6,
+	HomingArcMargin = 1.15,
+	HomingLeadMax = 1,
+	HomingFinalDistance = 50,
+	HomingFinalPull = 8,
+	HomingFuseDistance = 6,
+	HomingLoftDistance = 0,
+	HomingLoftRatio = 0,
+	HomingLoftMax = 0,
+	HomingLookAhead = 0,
+	HomingLookAheadClearance = 0,
 }
 
 -- ============================================
@@ -339,7 +367,7 @@ function Feature._modifyConfig(config, gunName)
 	end
 
 	-- PRESERVE BLASTER'S SEPARATE MODIFICATION.
-	if gunName == "Blaster" then
+	if gunName == "Blaster" or gunName == "HM-Launcher" then
 		Feature._saveOriginal(config, Feature._blasterStats)
 
 		for key, value in pairs(Feature._blasterStats) do
