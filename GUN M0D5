@@ -142,6 +142,7 @@ Feature._hmLauncherStats = {
 --	BurstFireEnabled = true,
 	BulletPerBurst = 5,
 	BurstRate = 0.0001,
+    BulletSpeed = 50,
 
 	FireRate = 0.0001,
 --	AmmoPerMag = math.huge,
