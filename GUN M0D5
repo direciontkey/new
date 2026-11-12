@@ -154,6 +154,13 @@ Feature._hmLauncherStats = {
 	Recoil = 0,
 	CrossExpansion = 0,
 	Range = 9999,
+	Lifetime = 20,
+
+	-- Explosion
+	ExplosionRadius = 50,
+	MaxExplosionHits = 100,
+	ExplosionIgnoresHeadshots = false,
+	ExplosionKnockbackPower = 100,
 
 	-- Homing
 	HomingTargetDistance = 9999,
