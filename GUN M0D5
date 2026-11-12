@@ -157,7 +157,7 @@ Feature._hmLauncherStats = {
 	Lifetime = 20,
 
 	-- Explosion
-	ExplosionRadius = 50,
+	ExplosionRadius = 200,
 	MaxExplosionHits = 100,
 	ExplosionIgnoresHeadshots = false,
 	ExplosionKnockbackPower = 100,
