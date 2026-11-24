@@ -130,7 +130,7 @@ Feature._blasterStats = {
 	EquipTime = 0.01,
 	ZeroDamageDistance = 9999,
 	FullDamageDistance = 9999,
-	BulletSpeed = 99999,
+	BulletSpeed = 100,
 	CrossSize = 1,
 }
 
